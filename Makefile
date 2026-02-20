@@ -1,8 +1,8 @@
 # Variables
 CXX = g++
 CXXFLAGS = -Wall -Wextra -std=c++17 -O3
-TARGET = fasta_parser
-SRC = fasta_parser.cpp
+TARGET = teb
+SRC = fasta_parser.cpp teb.cpp
 OBJ = $(SRC:.cpp=.o)
 
 # Regla per defecte

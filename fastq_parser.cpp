@@ -1,10 +1,10 @@
-#include "fasta_parser.hpp"
+#include "fastq_parser.hpp"
 
 using namespace std;
 
-// Parsing of the FASTA file
-vector<FastaRecord> parseFastaFile(const string& infile, const string& outfile) {
-    vector<FastaRecord> records;
+// Parsing of the Fastq file
+vector<FastqRecord> parseFastqFile(const string& infile, const string& outfile, const int qmin = 0) {
+    vector<FastqRecord> records;
     ifstream in(infile);
     ofstream out(outfile);
 
@@ -19,15 +19,16 @@ vector<FastaRecord> parseFastaFile(const string& infile, const string& outfile) 
     string line;
     string current_header = "";
     string current_sequence = "";
+    string sequence_quality = "";
 
     while (getline(in, line)) {
         if (line.empty()) continue;
 
-        // Character '>', indicates new header
-        if (line[0] == '>') {
+        // Character '@', indicates new header
+        if (line[0] == '@') {
             // save previous content
             if (!current_header.empty()) {
-                FastaRecord rec;
+                FastqRecord rec;
                 rec.header = current_header;
                 rec.sequence = current_sequence;
                 records.push_back(rec);
@@ -37,15 +38,26 @@ vector<FastaRecord> parseFastaFile(const string& infile, const string& outfile) 
             current_sequence = "";
             out << current_header << "\n";
         } else {
-            // Sequence line -> concat
             current_sequence += line;
-            out << current_sequence;
+            getline(in, line); //"+\n" line
+            getline(in, line);
+            sequence_quality += line;
+            if (current_sequence.length() != sequence_quality.length()) {
+                throw runtime_error("[parseFastqFile] sequence length != quality sequence length");
+            }
+            if (qmin > 0) {
+                int last_good_pos = 0
+                for (int i = current_sequence.length()-1; i >= 0; i--) {
+                    int score = sequence_quality[i]-33;
+                    if (score >= qmin)
+                }
+            }
         }
     }
 
     // We save the last record if it exists after the loop ends
     if (!current_header.empty()) {
-        FastaRecord rec;
+        FastqRecord rec;
         rec.header = current_header;
         rec.sequence = current_sequence;
         records.push_back(rec);
@@ -57,7 +69,7 @@ vector<FastaRecord> parseFastaFile(const string& infile, const string& outfile) 
 }
 
 // Compute statistics
-GlobalStats computeStatistics(const vector<FastaRecord>& records) {
+GlobalStats computeStatistics(const vector<FastqRecord>& records) {
     GlobalStats gStats;
     gStats.num_sequences = records.size();
     gStats.total_length = 0;
@@ -116,13 +128,16 @@ void printStatistics(const GlobalStats& stats) {
     cout << "GLOBAL SUMMARY:" << endl;
     cout << "  > Total lenght: " << stats.total_length << " bp" << endl;
     cout << "  > Total GC content: " << fixed << setprecision(2) << stats.overall_gc_content << "%" << endl;
+    cout << "  > Minimum read: " << fixed << setprecision(2) << stats.overall_gc_content << "%" << endl;
+    cout << "  > Maximum read: " << fixed << setprecision(2) << stats.overall_gc_content << "%" << endl;
+    cout << "  > Avg length read: " << fixed << setprecision(2) << stats.overall_gc_content << "%" << endl;
     cout << "============================================" << endl;
 }
 
-int fasta_parser(const string& input_file, const string& output_file) {
+int Fastq_parser(const string& input_file, const string& output_file) {
 
     // Step 1: READING
-    vector<FastaRecord> data = parseFastaFile(input_file, output_file);
+    vector<FastqRecord> data = parseFastqFile(input_file, output_file);
 
     if (data.empty()) {
         cout << "No sequences found." << endl;
@@ -137,3 +152,8 @@ int fasta_parser(const string& input_file, const string& output_file) {
 
     return 0;
 }
+
+//must check that, 
+// each record is complete, 
+// sequence and quality lines have equal length
+// must compute minimum, maximum and average read length

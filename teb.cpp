@@ -1,5 +1,6 @@
 #include "fasta_parser.hpp"
 
+#include <time.h>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -63,7 +64,7 @@ Config parse_args(int argc, char* argv[]) {
 }
 
 int main(int argc, char* argv[]) {
-
+    clock_t t = clock();
     try {
         Config cfg = parse_args(argc, argv);
 
@@ -76,6 +77,7 @@ int main(int argc, char* argv[]) {
     }
 
 
-
+    t = clock() -t;
+    printf("Total time std (micro-seconds): %ld \n", t);
     return 0;
 }

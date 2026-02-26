@@ -8,6 +8,8 @@
 #include <iomanip>
 #include <map>
 
+#include "utils.hpp"
+
 using namespace std;
 
 // Estructura per guardar cada registre FASTA

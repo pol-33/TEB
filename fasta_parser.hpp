@@ -8,6 +8,8 @@
 #include <iomanip>
 #include <map>
 
+#include "utils.hpp"
+
 using namespace std;
 
 // Estructura per guardar cada registre FASTA
@@ -27,7 +29,6 @@ struct GlobalStats {
     long long total_length;
     long long total_gc_count;
     double overall_gc_content;
-    map<string, SequenceStats> per_sequence;
 };
 
 int fasta_parser(const string& input_file, const string& output_file);

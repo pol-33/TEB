@@ -26,11 +26,11 @@ struct Config {
 void usage() {
     cout << "./teb <args> [options]       \n";
     cout << "\t Compulsory args:          \n";
-    cout << "\t\t --input <filename>      \n";
-    cout << "\t\t --output <filename>     \n";
-    cout << "\t\t --format <fasta/fastq>  \n";
+    cout << "\t\t -i <filename>    Input filename  \n";
+    cout << "\t\t -o <filename>    Output filename \n";
+    cout << "\t\t -f <fasta/fastq> Format of the input filename \n";
     cout << "\t Optional args:            \n";
-    cout << "\t\t --qmin <int value>      \n";
+    cout << "\t\t -qmin <int value>      \n";
 }
 
 Config parse_args(int argc, char* argv[]) {
@@ -40,11 +40,11 @@ Config parse_args(int argc, char* argv[]) {
     for (int i = 1; i < argc; i++) {
         string arg = argv[i];
 
-        if (arg == "--input") {
+        if (arg == "-i") {
             cfg.input = argv[++i];
-        } else if (arg == "--output") {
+        } else if (arg == "-o") {
             cfg.output = argv[++i];
-        } else if (arg == "--format") {
+        } else if (arg == "-f") {
             string f = argv[++i];
 
             if (f == "fasta") cfg.format = Format::FASTA;
@@ -52,7 +52,7 @@ Config parse_args(int argc, char* argv[]) {
             else throw runtime_error("[parse_args] Invalid format");
 
             format_set = true;
-        } else if (arg == "--qmin") {
+        } else if (arg == "-qmin") {
             cfg.qmin = stoi(argv[++i]);
         } else throw runtime_error("[parse_args] Unknown argument: " + arg);
     }
@@ -69,13 +69,13 @@ int main(int argc, char* argv[]) {
         Config cfg = parse_args(argc, argv);
 
         if (cfg.format == Format::FASTA) fasta_parser(cfg.input, cfg.output);
+        else if (cfg.format == Format::FASTA) fasta_parser(cfg.input, cfg.output);
 
     } catch (const exception& e) {
         cerr << "Error: " << e.what() << "\n";
         usage();
         return 1;
     }
-
 
     t = clock() -t;
     printf("Total time std (micro-seconds): %ld \n", t);

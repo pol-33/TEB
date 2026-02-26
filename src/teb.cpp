@@ -1,4 +1,5 @@
 #include "fasta_parser.hpp"
+#include "fastq_parser.hpp"
 
 #include <time.h>
 #include <iostream>
@@ -69,6 +70,7 @@ int main(int argc, char* argv[]) {
         Config cfg = parse_args(argc, argv);
 
         if (cfg.format == Format::FASTA) fasta_parser(cfg.input, cfg.output);
+        else if (cfg.format == Format::FASTQ) fastq_parser(cfg.input, cfg.output, cfg.qmin);
 
     } catch (const exception& e) {
         cerr << "Error: " << e.what() << "\n";
@@ -76,8 +78,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-
-    t = clock() -t;
+    t = clock() - t;
     printf("Total time std (micro-seconds): %ld \n", t);
     return 0;
 }

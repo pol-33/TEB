@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 #include <iomanip>
-#include <map>
+#include "common.hpp"
 
 using namespace std;
 
@@ -14,20 +14,6 @@ using namespace std;
 struct FastaRecord {
     string header;
     string sequence;
-};
-
-struct SequenceStats {
-    long long length;
-    long long gc_count;
-    double gc_content;
-};
-
-struct GlobalStats {
-    int num_sequences;
-    long long total_length;
-    long long total_gc_count;
-    double overall_gc_content;
-    map<string, SequenceStats> per_sequence;
 };
 
 int fasta_parser(const string& input_file, const string& output_file);

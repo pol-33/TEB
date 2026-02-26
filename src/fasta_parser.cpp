@@ -39,7 +39,7 @@ vector<FastaRecord> parseFastaFile(const string& infile, const string& outfile) 
         } else {
             // Sequence line -> concat
             current_sequence += line;
-            out << current_sequence;
+            out << line << "\n";
         }
     }
 

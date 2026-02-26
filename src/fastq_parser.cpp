@@ -2,7 +2,7 @@
 
 using namespace std;
 
-// Parsing of the Fastq file
+// Parsing of the FASTQ file
 vector<FastqRecord> parseFastqFile(const string& infile, const string& outfile, const int qmin = 0) {
     vector<FastqRecord> records;
     ifstream in(infile);
@@ -31,25 +31,38 @@ vector<FastqRecord> parseFastqFile(const string& infile, const string& outfile, 
                 FastqRecord rec;
                 rec.header = current_header;
                 rec.sequence = current_sequence;
+                rec.quality_sequence = sequence_quality;
                 records.push_back(rec);
             }
 
             current_header = line.substr(1);
             current_sequence = "";
+            sequence_quality = "";
             out << current_header << "\n";
         } else {
-            current_sequence += line;
-            getline(in, line); //"+\n" line
-            getline(in, line);
-            sequence_quality += line;
+            current_sequence = line;
+            getline(in, line); // "+" separator line
+            getline(in, line); // quality line
+            sequence_quality = line;
             if (current_sequence.length() != sequence_quality.length()) {
                 throw runtime_error("[parseFastqFile] sequence length != quality sequence length");
             }
             if (qmin > 0) {
-                int last_good_pos = 0
-                for (int i = current_sequence.length()-1; i >= 0; i--) {
-                    int score = sequence_quality[i]-33;
-                    if (score >= qmin)
+                // Quality trimming from the right
+                int last_good_pos = -1;
+                for (int i = (int)current_sequence.length() - 1; i >= 0; i--) {
+                    int score = (unsigned char)sequence_quality[i] - 33;
+                    if (score >= qmin) {
+                        last_good_pos = i;
+                        break;
+                    }
+                }
+                if (last_good_pos >= 0) {
+                    current_sequence = current_sequence.substr(0, last_good_pos + 1);
+                    sequence_quality = sequence_quality.substr(0, last_good_pos + 1);
+                } else {
+                    current_sequence = "";
+                    sequence_quality = "";
                 }
             }
         }
@@ -60,6 +73,7 @@ vector<FastqRecord> parseFastqFile(const string& infile, const string& outfile, 
         FastqRecord rec;
         rec.header = current_header;
         rec.sequence = current_sequence;
+        rec.quality_sequence = sequence_quality;
         records.push_back(rec);
     }
 
@@ -69,11 +83,13 @@ vector<FastqRecord> parseFastqFile(const string& infile, const string& outfile, 
 }
 
 // Compute statistics
-GlobalStats computeStatistics(const vector<FastqRecord>& records) {
-    GlobalStats gStats;
+FastqGlobalStats computeStatistics(const vector<FastqRecord>& records) {
+    FastqGlobalStats gStats;
     gStats.num_sequences = records.size();
     gStats.total_length = 0;
     gStats.total_gc_count = 0;
+    gStats.minimum = LLONG_MAX;
+    gStats.maximum = 0;
 
     // Calculate statistics for every registered sequence
     for (const auto& rec : records) {
@@ -97,6 +113,10 @@ GlobalStats computeStatistics(const vector<FastqRecord>& records) {
         gStats.per_sequence[rec.header] = sStats;
         gStats.total_length += sStats.length;
         gStats.total_gc_count += sStats.gc_count;
+
+        // Track min and max read lengths
+        if (sStats.length < gStats.minimum) gStats.minimum = sStats.length;
+        if (sStats.length > gStats.maximum) gStats.maximum = sStats.length;
     }
 
     // Calculate global GC
@@ -104,11 +124,16 @@ GlobalStats computeStatistics(const vector<FastqRecord>& records) {
                                 ? (double)gStats.total_gc_count / gStats.total_length * 100.0
                                 : 0.0;
 
+    // Compute average read length
+    gStats.avg_read_len = (gStats.num_sequences > 0)
+                          ? gStats.total_length / gStats.num_sequences
+                          : 0;
+
     return gStats;
 }
 
 // Print the statistics
-void printStatistics(const GlobalStats& stats) {
+void printStatistics(const FastqGlobalStats& stats) {
     cout << "============================================" << endl;
     cout << "       SUMMARY GENOMIC ANALYSIS" << endl;
     cout << "============================================" << endl;
@@ -128,16 +153,17 @@ void printStatistics(const GlobalStats& stats) {
     cout << "GLOBAL SUMMARY:" << endl;
     cout << "  > Total lenght: " << stats.total_length << " bp" << endl;
     cout << "  > Total GC content: " << fixed << setprecision(2) << stats.overall_gc_content << "%" << endl;
-    cout << "  > Minimum read: " << fixed << setprecision(2) << stats.overall_gc_content << "%" << endl;
-    cout << "  > Maximum read: " << fixed << setprecision(2) << stats.overall_gc_content << "%" << endl;
-    cout << "  > Avg length read: " << fixed << setprecision(2) << stats.overall_gc_content << "%" << endl;
+    // FIX: print the actual min/max/avg values, not overall_gc_content
+    cout << "  > Minimum read: " << stats.minimum << " bp" << endl;
+    cout << "  > Maximum read: " << stats.maximum << " bp" << endl;
+    cout << "  > Avg length read: " << stats.avg_read_len << " bp" << endl;
     cout << "============================================" << endl;
 }
 
-int Fastq_parser(const string& input_file, const string& output_file) {
+int fastq_parser(const string& input_file, const string& output_file, const int qmin) {
 
     // Step 1: READING
-    vector<FastqRecord> data = parseFastqFile(input_file, output_file);
+    vector<FastqRecord> data = parseFastqFile(input_file, output_file, qmin);
 
     if (data.empty()) {
         cout << "No sequences found." << endl;
@@ -145,7 +171,7 @@ int Fastq_parser(const string& input_file, const string& output_file) {
     }
 
     // Step 2: CALCULATING
-    GlobalStats stats = computeStatistics(data);
+    FastqGlobalStats stats = computeStatistics(data);
 
     // Step 3: PRINTING STATS
     printStatistics(stats);
@@ -153,7 +179,7 @@ int Fastq_parser(const string& input_file, const string& output_file) {
     return 0;
 }
 
-//must check that, 
-// each record is complete, 
+//must check that,
+// each record is complete,
 // sequence and quality lines have equal length
 // must compute minimum, maximum and average read length

@@ -4,3 +4,5 @@
 # Sequence files
 *.fna
 *.fastq
+*.fna.gz
+*.fastq.gz

@@ -16,6 +16,6 @@ struct FastaRecord {
     string sequence;
 };
 
-int fasta_parser(const string& input_file, const string& output_file);
+int fasta_parser(const string& input_file, const string& output_file = "");
 
 #endif

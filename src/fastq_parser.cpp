@@ -6,14 +6,19 @@ using namespace std;
 vector<FastqRecord> parseFastqFile(const string& infile, const string& outfile, const int qmin = 0) {
     vector<FastqRecord> records;
     ifstream in(infile);
-    ofstream out(outfile);
 
     if (!in.is_open()) {
         cerr << "Error: The file " << infile << " could not be opened." << endl;
         return records;
-    } else if (!out.is_open()) {
-        cerr << "Error: The file " << outfile << " could not be opened/created." << endl;
-        return records;
+    }
+
+    ofstream out;
+    if (!outfile.empty()) {
+        out.open(outfile);
+        if (!out.is_open()) {
+            cerr << "Error: The file " << outfile << " could not be opened/created." << endl;
+            return records;
+        }
     }
 
     string line;

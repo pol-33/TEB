@@ -25,13 +25,13 @@ struct Config {
 };
 
 void usage() {
-    cout << "./teb <args> [options]       \n";
-    cout << "\t Compulsory args:          \n";
-    cout << "\t\t --input <filename>      \n";
-    cout << "\t\t --output <filename>     \n";
-    cout << "\t\t --format <fasta/fastq>  \n";
-    cout << "\t Optional args:            \n";
-    cout << "\t\t --qmin <int value>      \n";
+    cout << "./teb <args> [options]              \n";
+    cout << "\t Compulsory args:                 \n";
+    cout << "\t\t --input <filename>             \n";
+    cout << "\t\t --format <fasta/fastq>         \n";
+    cout << "\t Optional args:                   \n";
+    cout << "\t\t --output <filename>  (omit for stats-only mode)\n";
+    cout << "\t\t --qmin <int value>   (FASTQ only)\n";
 }
 
 Config parse_args(int argc, char* argv[]) {
@@ -58,7 +58,7 @@ Config parse_args(int argc, char* argv[]) {
         } else throw runtime_error("[parse_args] Unknown argument: " + arg);
     }
 
-    if (cfg.input.empty() || cfg.output.empty() || !format_set)
+    if (cfg.input.empty() || !format_set)
         throw runtime_error("[parse_args] Missing required arguments");
 
     return cfg;

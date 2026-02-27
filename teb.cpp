@@ -78,6 +78,16 @@ int main(int argc, char* argv[]) {
     }
 
     t = clock() -t;
-    printf("Total time std (micro-seconds): %ld \n", t);
+    long seconds = 0;
+    long remainder = t;
+
+    /* Count seconds without division */
+    while (remainder >= 1000000) {
+        remainder -= 1000000;
+        seconds++;
+    }
+
+    /* Print as seconds.microseconds */
+    printf("Total time std (seconds): %ld.%06ld\n", seconds, remainder);
     return 0;
 }

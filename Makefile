@@ -1,7 +1,7 @@
 # Variables
 CXX = g++
 CXXFLAGS = -Wall -Wextra -std=c++17 -O3
-TARGET = teb
+TARGET = teb.exe
 SRC =  fasta_parser.cpp teb.cpp
 OBJ = $(SRC:.cpp=.o)
 

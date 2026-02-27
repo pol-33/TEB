@@ -10,7 +10,7 @@ static inline void computeStatistics(GlobalStats& gStats, const string& sequence
 
     int local_gc_count = 0;
     for (char c : sequence) {
-        local_gc_count+=gc_matching(c);
+        local_gc_count += gc_matching(c);
     }
 
     gStats.total_gc_count += local_gc_count;
@@ -37,7 +37,6 @@ void parseFastaFile(const string& infile, const string& outfile, GlobalStats& st
 
     string line;
     string current_header = "";
-    string current_sequence = "";
 
     while (getline(in, line)) {
         if (line.empty()) continue;
@@ -48,9 +47,8 @@ void parseFastaFile(const string& infile, const string& outfile, GlobalStats& st
             out << current_header << "\n";
         } else {
             // Otherwise: Sequence line -> concat
-            current_sequence += line;
-            out << current_sequence;
-            computeStatistics(stats, current_sequence);
+            out << line;
+            computeStatistics(stats, line);
         }
     }
 

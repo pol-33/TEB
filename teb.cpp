@@ -21,7 +21,7 @@ struct Config {
     string output;
     Format format;
     int qmin = 0;
-    int kmer_length = 0;
+    unsigned int kmer_length = 0;
 };
 
 void usage() {

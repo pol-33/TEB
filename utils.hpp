@@ -13,7 +13,7 @@ using namespace std;
 
 typedef unordered_map<string,list<int>> kmer_table_t;
 
-static inline void update_kmer_table(const string& text, kmer_table_t& text_kmer_table, const int kmer_length) {
+static inline void update_kmer_table(const string& text, kmer_table_t& text_kmer_table, const unsigned int kmer_length) {
     if (text.length() < kmer_length) return;
 
     string kmer = text.substr(0, kmer_length);

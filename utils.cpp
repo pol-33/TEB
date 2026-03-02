@@ -7,11 +7,8 @@ void print_kmer_table(const kmer_table_t& table) {
         const string& kmer = pair.first;
         const list<int>& positions = pair.second;
 
-        printf("%s : ", kmer.c_str());
+        printf("%s : with %li elements\n", kmer.c_str(), positions.size());
 
-        for (int pos : positions)
-            printf("%d ", pos);
-
-        printf("\n");
+        //for (int pos : positions) printf("%d ", pos);
     }
 }

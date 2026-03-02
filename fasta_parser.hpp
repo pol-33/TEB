@@ -31,6 +31,6 @@ struct GlobalStats {
     double overall_gc_content;
 };
 
-int fasta_parser(const string& input_file, const string& output_file, const int kmer_length);
+int fasta_parser(const string& input_file, const string& output_file, const unsigned int kmer_length);
 
 #endif

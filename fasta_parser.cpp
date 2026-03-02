@@ -1,5 +1,7 @@
 #include "fasta_parser.hpp"
 
+#define KMER_INDEX_SIZE 10
+
 using namespace std;
 
 // Compute statistics
@@ -23,9 +25,10 @@ static inline void computeStatistics(GlobalStats& gStats, const string& sequence
 }
 
 // Parsing of the FASTA file
-void parseFastaFile(const string& infile, const string& outfile, GlobalStats& stats) {
+void parseFastaFile(const string& infile, const string& outfile, GlobalStats& stats, const int kmer_length) {
     ifstream in(infile);
     ofstream out(outfile);
+    kmer_table_t kmer_indxs;
 
     if (!in.is_open()) {
         cerr << "Error: The file " << infile << " could not be opened." << endl;
@@ -49,8 +52,13 @@ void parseFastaFile(const string& infile, const string& outfile, GlobalStats& st
             // Otherwise: Sequence line -> concat
             out << line;
             computeStatistics(stats, line);
+            update_kmer_table(line, kmer_indxs, kmer_length);
         }
     }
+
+    #ifdef DEBUG
+    print_kmer_table(kmer_indxs);
+    #endif
 
     in.close();
     out.close();
@@ -63,13 +71,13 @@ void printStatistics(const GlobalStats& stats) {
     cout << "       SUMMARY GENOMIC ANALYSIS" << endl;
     cout << "============================================" << endl;
     cout << "GLOBAL SUMMARY:" << endl;
-    cout << "  > Total lenght: " << stats.total_length << " bp" << endl;
+    cout << "  > Total length: " << stats.total_length << " bp" << endl;
     cout << "  > Total GC content: " << fixed << setprecision(2) << stats.overall_gc_content << "%" << endl;
     cout << "  > Number of processed sequences: " << stats.num_sequences << endl;
     cout << "============================================" << endl;
 }
 
-int fasta_parser(const string& input_file, const string& output_file) {
+int fasta_parser(const string& input_file, const string& output_file, const int kmer_length) {
 
     GlobalStats stats;
     stats.num_sequences = 0;
@@ -77,7 +85,7 @@ int fasta_parser(const string& input_file, const string& output_file) {
     stats.total_gc_count = 0;
 
     // Step 1: READING
-    parseFastaFile(input_file, output_file, stats);
+    parseFastaFile(input_file, output_file, stats, kmer_length);
     if (stats.num_sequences == 0) {
         cout << "No sequences found." << endl;
         return 0;

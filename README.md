@@ -19,15 +19,16 @@ make exercises/ex5_2   # full Boyer-Moore
 ## Usage
 
 ```
-./teb --input <file> --format <fasta|fastq> [--output <file>] [--qmin <int>]
+./teb.exe -i <file> -f <fasta|fastq> [-o <file>] [-qmin <int>]
 ```
 
 | Argument | Required | Description |
 |---|---|---|
-| `--input <file>` | ✅ | Input FASTA or FASTQ file |
-| `--format <fasta\|fastq>` | ✅ | Input file format |
-| `--output <file>` | ❌ | Write parsed sequences to this file. Omit for stats-only mode |
-| `--qmin <int>` | ❌ | FASTQ only — trim bases from the right with quality score below this threshold |
+| `-i <file>` | ✅ | Input FASTA or FASTQ file |
+| `-f <fasta\|fastq>` | ✅ | Input file format |
+| `-o <file>` | ❌ | Write parsed sequences to this file. Omit for stats-only mode |
+| `-qmin <int>` | ❌ | FASTQ only — trim bases from the right with quality score below this threshold |
+| `-k <int>` | ❌ | FASTA only — compute k-mer frequencies for this k (e.g. 3 for trinucleotides) |
 
 ---
 
@@ -35,22 +36,22 @@ make exercises/ex5_2   # full Boyer-Moore
 
 **FASTA — stats only (no output file):**
 ```bash
-./teb --input datasets/chr1.fna --format fasta
+./teb.exe -i datasets/chr1.fna -f fasta
 ```
 
 **FASTA — parse and write output:**
 ```bash
-./teb --input datasets/chr1.fna --format fasta --output output/chr1-out.fna
+./teb.exe -i datasets/chr1.fna -f fasta -o output/chr1-out.fna
 ```
 
 **FASTQ — stats only:**
 ```bash
-./teb --input datasets/SRR22320000_1.fastq --format fastq
+./teb.exe -i datasets/SRR22320000_1.fastq -f fastq
 ```
 
 **FASTQ — parse with quality trimming and write output:**
 ```bash
-./teb --input datasets/SRR22320000_1.fastq --format fastq --output output/SRR1-out.fastq --qmin 20
+./teb.exe -i datasets/SRR22320000_1.fastq -f fastq -o output/SRR1-out.fastq -qmin 20
 ```
 
 ---

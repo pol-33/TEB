@@ -7,7 +7,6 @@ using namespace std;
 // Compute statistics
 static inline void computeStatistics(GlobalStats& gStats, const string& sequence) {
     int chars_read = sequence.length();
-    gStats.num_sequences += 1;
     gStats.total_length += chars_read;
 
     int local_gc_count = 0;
@@ -17,9 +16,9 @@ static inline void computeStatistics(GlobalStats& gStats, const string& sequence
 
     gStats.total_gc_count += local_gc_count;
 
-    // Calculate global GC
-    gStats.overall_gc_content = (chars_read > 0)
-                        ? (double)local_gc_count / chars_read * 100.0
+    // Calculate global GC from cumulative totals (not just this line)
+    gStats.overall_gc_content = (gStats.total_length > 0)
+                        ? (double)gStats.total_gc_count / gStats.total_length * 100.0
                         : 0.0;
     return;
 }
@@ -53,6 +52,7 @@ void parseFastaFile(const string& infile, const string& outfile, GlobalStats& st
         // Character '>', indicates new header
         if (line[0] == '>') {
             current_header = line.substr(1);
+            stats.num_sequences += 1;
             out << current_header << "\n";
         } else {
             // Otherwise: Sequence line -> concat

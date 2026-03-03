@@ -8,6 +8,8 @@
 #include <iomanip>
 #include "common.hpp"
 
+#include "utils.hpp"
+
 using namespace std;
 
 // Estructura per guardar cada registre FASTA
@@ -16,6 +18,6 @@ struct FastaRecord {
     string sequence;
 };
 
-int fasta_parser(const string& input_file, const string& output_file = "");
+int fasta_parser(const string& input_file, const string& output_file = "", const unsigned int kmer_length);
 
 #endif

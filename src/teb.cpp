@@ -22,16 +22,18 @@ struct Config {
     string output;
     Format format;
     int qmin = 0;
+    unsigned int kmer_length = 0;
 };
 
 void usage() {
-    cout << "./teb <args> [options]              \n";
-    cout << "\t Compulsory args:                 \n";
-    cout << "\t\t --input <filename>             \n";
-    cout << "\t\t --format <fasta/fastq>         \n";
-    cout << "\t Optional args:                   \n";
-    cout << "\t\t --output <filename>  (omit for stats-only mode)\n";
-    cout << "\t\t --qmin <int value>   (FASTQ only)\n";
+    cout << "./teb <args> [options]       \n";
+    cout << "\t Compulsory args:          \n";
+    cout << "\t\t -i <filename>     Input filename  \n";
+    cout << "\t\t -f <fasta/fastq>  Format of the input filename\n";
+    cout << "\t Optional args:            \n";
+    cout << "\t\t -o <filename>     Output filename (omit for stats-only mode) \n";
+    cout << "\t\t -qmin <int value> Minimum Quality for bases (FASTQ only)\n";
+    cout << "\t\t -k <int value>    Kmer length for preprocessing text\n";
 }
 
 Config parse_args(int argc, char* argv[]) {
@@ -41,11 +43,11 @@ Config parse_args(int argc, char* argv[]) {
     for (int i = 1; i < argc; i++) {
         string arg = argv[i];
 
-        if (arg == "--input") {
+        if (arg == "-i") {
             cfg.input = argv[++i];
-        } else if (arg == "--output") {
+        } else if (arg == "-o") {
             cfg.output = argv[++i];
-        } else if (arg == "--format") {
+        } else if (arg == "-f") {
             string f = argv[++i];
 
             if (f == "fasta") cfg.format = Format::FASTA;
@@ -53,8 +55,10 @@ Config parse_args(int argc, char* argv[]) {
             else throw runtime_error("[parse_args] Invalid format");
 
             format_set = true;
-        } else if (arg == "--qmin") {
+        } else if (arg == "-qmin") {
             cfg.qmin = stoi(argv[++i]);
+        } else if (arg == "-k") {
+            cfg.kmer_length = stoi(argv[++i]);
         } else throw runtime_error("[parse_args] Unknown argument: " + arg);
     }
 
@@ -69,7 +73,7 @@ int main(int argc, char* argv[]) {
     try {
         Config cfg = parse_args(argc, argv);
 
-        if (cfg.format == Format::FASTA) fasta_parser(cfg.input, cfg.output);
+        if (cfg.format == Format::FASTA) fasta_parser(cfg.input, cfg.output, cfg.kmer_length);
         else if (cfg.format == Format::FASTQ) fastq_parser(cfg.input, cfg.output, cfg.qmin);
 
     } catch (const exception& e) {
@@ -78,7 +82,17 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    t = clock() - t;
-    printf("Total time std (micro-seconds): %ld \n", t);
+    t = clock() -t;
+    long seconds = 0;
+    long remainder = t;
+
+    /* Count seconds without division */
+    while (remainder >= 1000000) {
+        remainder -= 1000000;
+        seconds++;
+    }
+
+    /* Print as seconds.microseconds */
+    printf("Total time std (seconds): %ld.%06ld\n", seconds, remainder);
     return 0;
 }

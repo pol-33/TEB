@@ -10,13 +10,9 @@ static inline void computeStatistics(GlobalStats& gStats, SequenceStats& seqStat
     gStats.total_length += chars_read;
     seqStats.length    += chars_read;
 
-    int local_gc_count = 0;
-    for (char c : sequence) {
-        local_gc_count += gc_matching(c);
-    }
-
-    gStats.total_gc_count += local_gc_count;
-    seqStats.gc_count     += local_gc_count;
+    long long local_gc = count_gc_bulk(sequence.data(), (size_t)chars_read);
+    gStats.total_gc_count += local_gc;
+    seqStats.gc_count     += local_gc;
 
     // Calculate global GC from cumulative totals (not just this line)
     gStats.overall_gc_content = (gStats.total_length > 0)
@@ -27,17 +23,23 @@ static inline void computeStatistics(GlobalStats& gStats, SequenceStats& seqStat
 
 // Parsing of the FASTA file
 void parseFastaFile(const string& infile, const string& outfile, GlobalStats& stats, const unsigned int kmer_length) {
-    ifstream in(infile);
+    // Set large buffer BEFORE open() so the streambuf uses it from the first read
+    static char in_buf[IO_BUFFER_SIZE];
+    ifstream in;
+    in.rdbuf()->pubsetbuf(in_buf, sizeof(in_buf));
+    in.open(infile);
 
     if (!in.is_open()) {
         cerr << "Error: The file " << infile << " could not be opened." << endl;
         return;
     }
 
+    static char out_buf[IO_BUFFER_SIZE];
     ofstream out;
     kmer_table_t kmer_indxs;
     
     if (!outfile.empty()) {
+        out.rdbuf()->pubsetbuf(out_buf, sizeof(out_buf));
         out.open(outfile);
         if (!out.is_open()) {
             cerr << "Error: The file " << outfile << " could not be opened/created." << endl;
@@ -68,10 +70,17 @@ void parseFastaFile(const string& infile, const string& outfile, GlobalStats& st
             current_header = line.substr(1);
             cur_seq = {0, 0, 0.0};
             stats.num_sequences += 1;
-            out << current_header << "\n";
+            if (out.is_open()) {
+                out.put('>');
+                out.write(current_header.data(), (streamsize)current_header.size());
+                out.put('\n');
+            }
         } else {
-            // Otherwise: Sequence line -> concat
-            out << line;
+            // Sequence line: raw write avoids format overhead
+            if (out.is_open()) {
+                out.write(line.data(), (streamsize)line.size());
+                out.put('\n');
+            }
             computeStatistics(stats, cur_seq, line);
             if (kmer_length > 0) update_kmer_table(line, kmer_indxs, kmer_length);
         }

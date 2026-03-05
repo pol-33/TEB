@@ -2,7 +2,7 @@
 #define __COMMON__
 
 #include <string>
-#include <map>
+#include <unordered_map>
 
 struct SequenceStats {
     long long length;
@@ -15,7 +15,7 @@ struct GlobalStats {
     long long total_length;
     long long total_gc_count;
     double overall_gc_content;
-    std::map<std::string, SequenceStats> per_sequence;
+    std::unordered_map<std::string, SequenceStats> per_sequence;
 };
 
 #endif

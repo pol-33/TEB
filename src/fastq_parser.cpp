@@ -1,140 +1,101 @@
 #include "fastq_parser.hpp"
+#include "utils.hpp"
+
+#include <climits>
+#include <iomanip>
 
 using namespace std;
 
-// Parsing of the FASTQ file
-vector<FastqRecord> parseFastqFile(const string& infile, const string& outfile, const int qmin = 0) {
-    vector<FastqRecord> records;
-    ifstream in(infile);
+// Single-pass streaming parser that reads one record at a time and computes stats on-the-fly
+static void parseFastqFile(const string& infile, const string& outfile, FastqGlobalStats& stats, const int qmin) {
+    static char in_buf[IO_BUFFER_SIZE];
+    ifstream in;
+    in.rdbuf()->pubsetbuf(in_buf, sizeof(in_buf));
+    in.open(infile);
 
     if (!in.is_open()) {
         cerr << "Error: The file " << infile << " could not be opened." << endl;
-        return records;
+        return;
     }
 
+    static char out_buf[IO_BUFFER_SIZE];
     ofstream out;
     if (!outfile.empty()) {
+        out.rdbuf()->pubsetbuf(out_buf, sizeof(out_buf));
         out.open(outfile);
         if (!out.is_open()) {
             cerr << "Error: The file " << outfile << " could not be opened/created." << endl;
-            return records;
+            return;
         }
     }
 
-    string line;
-    string current_header = "";
-    string current_sequence = "";
-    string sequence_quality = "";
+    stats.num_sequences  = 0;
+    stats.total_length   = 0;
+    stats.total_gc_count = 0;
+    stats.minimum        = LLONG_MAX;
+    stats.maximum        = 0LL;
 
-    while (getline(in, line)) {
-        if (line.empty()) continue;
+    string header, sequence, separator, quality;
 
-        // Character '@', indicates new header
-        if (line[0] == '@') {
-            // save previous content
-            if (!current_header.empty()) {
-                FastqRecord rec;
-                rec.header = current_header;
-                rec.sequence = current_sequence;
-                rec.quality_sequence = sequence_quality;
-                records.push_back(rec);
-            }
+    while (getline(in, header)) {
+        if (header.empty()) continue;
+        if (header[0] != '@') continue;
 
-            current_header = line.substr(1);
-            current_sequence = "";
-            sequence_quality = "";
-            out << current_header << "\n";
-        } else {
-            current_sequence = line;
-            getline(in, line); // "+" separator line
-            getline(in, line); // quality line
-            sequence_quality = line;
-            if (current_sequence.length() != sequence_quality.length()) {
-                throw runtime_error("[parseFastqFile] sequence length != quality sequence length");
-            }
-            if (qmin > 0) {
-                // Quality trimming from the right
-                int last_good_pos = -1;
-                for (int i = (int)current_sequence.length() - 1; i >= 0; i--) {
-                    int score = (unsigned char)sequence_quality[i] - 33;
-                    if (score >= qmin) {
-                        last_good_pos = i;
-                        break;
-                    }
+        if (!getline(in, sequence))  break;
+        if (!getline(in, separator)) break;
+        if (!getline(in, quality))   break;
+
+        if (sequence.size() != quality.size())
+            throw runtime_error("[parseFastqFile] sequence length != quality sequence length");
+
+        // In-place quality trimming from the right
+        if (qmin > 0) {
+            int last_good = -1;
+            for (int i = (int)quality.size() - 1; i >= 0; --i) {
+                if ((unsigned char)quality[i] - 33 >= (unsigned)qmin) {
+                    last_good = i;
+                    break;
                 }
-                if (last_good_pos >= 0) {
-                    current_sequence = current_sequence.substr(0, last_good_pos + 1);
-                    sequence_quality = sequence_quality.substr(0, last_good_pos + 1);
-                } else {
-                    current_sequence = "";
-                    sequence_quality = "";
-                }
+            }
+            if (last_good >= 0) {
+                sequence.resize((size_t)(last_good + 1));
+                quality.resize((size_t)(last_good + 1));
+            } else {
+                sequence.clear();
+                quality.clear();
             }
         }
-    }
 
-    // We save the last record if it exists after the loop ends
-    if (!current_header.empty()) {
-        FastqRecord rec;
-        rec.header = current_header;
-        rec.sequence = current_sequence;
-        rec.quality_sequence = sequence_quality;
-        records.push_back(rec);
-    }
+        // Write full FASTQ record with raw write() to avoid << format overhead
+        if (out.is_open()) {
+            out.write(header.data(),    (streamsize)header.size());    out.put('\n');
+            out.write(sequence.data(),  (streamsize)sequence.size());  out.put('\n');
+            out.write(separator.data(), (streamsize)separator.size()); out.put('\n');
+            out.write(quality.data(),   (streamsize)quality.size());   out.put('\n');
+        }
 
-    in.close();
-    out.close();
-    return records;
-}
+        // Bulk GC count
+        long long len = (long long)sequence.size();
+        long long gc  = count_gc_bulk(sequence.data(), (size_t)len);
 
-// Compute statistics
-FastqGlobalStats computeStatistics(const vector<FastqRecord>& records) {
-    FastqGlobalStats gStats;
-    gStats.num_sequences = records.size();
-    gStats.total_length = 0;
-    gStats.total_gc_count = 0;
-    gStats.minimum = LLONG_MAX;
-    gStats.maximum = 0;
-
-    // Calculate statistics for every registered sequence
-    for (const auto& rec : records) {
         SequenceStats sStats;
-        sStats.length = rec.sequence.length();
-        sStats.gc_count = 0;
+        sStats.length     = len;
+        sStats.gc_count   = gc;
+        sStats.gc_content = (len > 0) ? (double)gc / len * 100.0 : 0.0;
 
-        for (char c : rec.sequence) {
-            char base = toupper(c);
-            if (base == 'G' || base == 'C') {
-                sStats.gc_count++;
-            }
-        }
-
-        // Calculate individual GC
-        sStats.gc_content = (sStats.length > 0)
-                            ? (double)sStats.gc_count / sStats.length * 100.0
-                            : 0.0;
-
-        // Save map and update stats
-        gStats.per_sequence[rec.header] = sStats;
-        gStats.total_length += sStats.length;
-        gStats.total_gc_count += sStats.gc_count;
-
-        // Track min and max read lengths
-        if (sStats.length < gStats.minimum) gStats.minimum = sStats.length;
-        if (sStats.length > gStats.maximum) gStats.maximum = sStats.length;
+        stats.per_sequence.emplace(header.substr(1), sStats);
+        stats.total_length   += len;
+        stats.total_gc_count += gc;
+        if (len < stats.minimum) stats.minimum = len;
+        if (len > stats.maximum) stats.maximum = len;
+        ++stats.num_sequences;
     }
 
-    // Calculate global GC
-    gStats.overall_gc_content = (gStats.total_length > 0)
-                                ? (double)gStats.total_gc_count / gStats.total_length * 100.0
-                                : 0.0;
-
-    // Compute average read length
-    gStats.avg_read_len = (gStats.num_sequences > 0)
-                          ? gStats.total_length / gStats.num_sequences
-                          : 0;
-
-    return gStats;
+    stats.overall_gc_content = (stats.total_length > 0)
+        ? (double)stats.total_gc_count / stats.total_length * 100.0
+        : 0.0;
+    stats.avg_read_len = (stats.num_sequences > 0)
+        ? stats.total_length / stats.num_sequences : 0;
 }
 
 // Print the statistics
@@ -158,7 +119,6 @@ void printStatistics(const FastqGlobalStats& stats) {
     cout << "GLOBAL SUMMARY:" << endl;
     cout << "  > Total lenght: " << stats.total_length << " bp" << endl;
     cout << "  > Total GC content: " << fixed << setprecision(2) << stats.overall_gc_content << "%" << endl;
-    // FIX: print the actual min/max/avg values, not overall_gc_content
     cout << "  > Minimum read: " << stats.minimum << " bp" << endl;
     cout << "  > Maximum read: " << stats.maximum << " bp" << endl;
     cout << "  > Avg length read: " << stats.avg_read_len << " bp" << endl;
@@ -167,24 +127,16 @@ void printStatistics(const FastqGlobalStats& stats) {
 
 int fastq_parser(const string& input_file, const string& output_file, const int qmin) {
 
-    // Step 1: READING
-    vector<FastqRecord> data = parseFastqFile(input_file, output_file, qmin);
+    FastqGlobalStats stats;
 
-    if (data.empty()) {
+    // Single-pass to parse and compute stats simultaneously
+    parseFastqFile(input_file, output_file, stats, qmin);
+
+    if (stats.num_sequences == 0) {
         cout << "No sequences found." << endl;
         return 0;
     }
 
-    // Step 2: CALCULATING
-    FastqGlobalStats stats = computeStatistics(data);
-
-    // Step 3: PRINTING STATS
     printStatistics(stats);
-
     return 0;
 }
-
-//must check that,
-// each record is complete,
-// sequence and quality lines have equal length
-// must compute minimum, maximum and average read length

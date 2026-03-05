@@ -48,22 +48,11 @@ static void parseFastqFile(const string& infile, const string& outfile, FastqGlo
         if (sequence.size() != quality.size())
             throw runtime_error("[parseFastqFile] sequence length != quality sequence length");
 
-        // In-place quality trimming from the right
+        // In-place quality trimming using SWAR vectorised scan (see utils.hpp)
         if (qmin > 0) {
-            int last_good = -1;
-            for (int i = (int)quality.size() - 1; i >= 0; --i) {
-                if ((unsigned char)quality[i] - 33 >= (unsigned)qmin) {
-                    last_good = i;
-                    break;
-                }
-            }
-            if (last_good >= 0) {
-                sequence.resize((size_t)(last_good + 1));
-                quality.resize((size_t)(last_good + 1));
-            } else {
-                sequence.clear();
-                quality.clear();
-            }
+            size_t trim = get_trim_limit(quality, qmin);
+            sequence.resize(trim);
+            quality.resize(trim);
         }
 
         // Write full FASTQ record with raw write() to avoid << format overhead

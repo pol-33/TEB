@@ -23,11 +23,10 @@
 #
 #  Usage:  ./bench.sh
 # =============================================================================
-set -euo pipefail
+set -uo pipefail
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BINARY="$REPO/teb.exe"
 FASTA_IN="$REPO/datasets/chr1.fna"
 FASTQ_IN="$REPO/datasets/SRR22320000_1.fastq"
 FASTA_OUT="/tmp/teb_bench_out.fna"
@@ -133,6 +132,7 @@ benchmark_suite() {
         # ── Checkout & build ─────────────────────────────────────────────────
         printf "  %s● building  %s  →  %s%s\n" "$YEL" "$hash" "$label" "$RST" >&2
         git -C "$REPO" checkout --quiet "$hash"
+        rm -f "$REPO/teb" "$REPO/teb.exe"
 
         local build_log; build_log=$(mktemp)
         if ! make -C "$REPO" re > "$build_log" 2>&1; then
@@ -142,9 +142,18 @@ benchmark_suite() {
         fi
         rm -f "$build_log"
 
+        local binary=""
+        if   [[ -x "$REPO/teb.exe" ]]; then binary="$REPO/teb.exe"
+        elif [[ -x "$REPO/teb"     ]]; then binary="$REPO/teb"
+        else
+            printf "  %s[NO BINARY found after build of %s — skipping]%s\n" \
+                "$RED" "$hash" "$RST" >&2
+            continue
+        fi
+
         # ── Warm-up run (page-cache priming, not measured) ───────────────────
         printf "  %s  warm-up ...%s\r" "$DIM" "$RST" >&2
-        "$BINARY" -i "$inp" -f "$fmt" -o "$out_path" > /dev/null 2>&1 || true
+        "$binary" -i "$inp" -f "$fmt" -o "$out_path" > /dev/null 2>&1 || true
 
         # ── Timed runs ───────────────────────────────────────────────────────
         local sum_real=0 sum_cpu=0 sum_instr=0 sum_cycles=0 sum_pf=0
@@ -155,8 +164,8 @@ benchmark_suite() {
 
             local real user sys instr cycles rss pf
             read -r real user sys instr cycles rss pf < <(
-                single_run "$out_path" "$BINARY" -i "$inp" -f "$fmt"
-            )
+                single_run "$out_path" "$binary" -i "$inp" -f "$fmt"
+            ) || true
 
             local cpu; cpu=$(awk "BEGIN{printf \"%.6f\", $user + $sys}")
             min_real=$(awk "BEGIN{ print ($real < $min_real) ? $real : $min_real }")
@@ -205,7 +214,8 @@ benchmark_suite() {
 
     # ── Restore git state ─────────────────────────────────────────────────────
     printf "\n  %s● restoring branch: %s%s\n" "$YEL" "$saved_ref" "$RST" >&2
-    git -C "$REPO" checkout --quiet "$saved_ref"
+    git -C "$REPO" checkout --force --quiet "$saved_ref"
+    rm -f "$REPO/teb" "$REPO/teb.exe"
     make -C "$REPO" re > /dev/null 2>&1
 
     if [[ $stashed -eq 1 ]]; then

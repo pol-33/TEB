@@ -1,6 +1,9 @@
 # Object files
 *.o
+*.exe
 
 # Sequence files
 *.fna
 *.fastq
+*.fna.gz
+*.fastq.gz

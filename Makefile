@@ -1,23 +1,39 @@
 # Variables
 CXX = g++
-CXXFLAGS = -Wall -Wextra -std=c++17 -O3
-TARGET = teb
-SRC = fasta_parser.cpp teb.cpp
-OBJ = $(SRC:.cpp=.o)
+CXXFLAGS = -Wall -Wextra -std=c++17 -O3 -march=native -I include/
+DEBUGFLAGS = -DDEBUG -g
 
-# Regla per defecte
-all: $(TARGET)
+TARGET = teb.exe
+SRC = src/fasta_parser.cpp src/fastq_parser.cpp src/utils.cpp src/teb.cpp
+OBJ = $(SRC:src/%.cpp=src/%.o)
 
-# Enllaçar l'executable
+# Default target = release
+all: release
+
+# Release build
+release: $(TARGET)
+
+# Debug build
+debug: CXXFLAGS += $(DEBUGFLAGS)
+debug: $(TARGET)
+
+# Link executable
 $(TARGET): $(OBJ)
 	$(CXX) $(CXXFLAGS) -o $(TARGET) $(OBJ)
 
-# Compilar el fitxer .cpp a .o
-%.o: %.cpp
+# Compile .cpp to .o
+src/%.o: src/%.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# Netejar
+# Clean
 clean:
 	rm -f $(OBJ) $(TARGET)
 
 re: clean all
+
+# Standalone exercises (compiled separately)
+exercises/ex2_1: exercises/ex2_1.exact_search.cc
+	$(CXX) $(CXXFLAGS) -o $@ $<
+
+exercises/ex5_2: exercises/ex5_2.full_boyer_moore.cc
+	$(CXX) $(CXXFLAGS) -o $@ $<

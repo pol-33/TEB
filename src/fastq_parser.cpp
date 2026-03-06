@@ -3,20 +3,42 @@
 
 #include <climits>
 #include <iomanip>
+#include <sys/mman.h>   // mmap / munmap / madvise
+#include <sys/stat.h>   // fstat
+#include <fcntl.h>      // open
+#include <unistd.h>     // close
 
 using namespace std;
 
-// Single-pass streaming parser that reads one record at a time and computes stats on-the-fly
-static void parseFastqFile(const string& infile, const string& outfile, FastqGlobalStats& stats, const int qmin) {
-    static char in_buf[IO_BUFFER_SIZE];
-    ifstream in;
-    in.rdbuf()->pubsetbuf(in_buf, sizeof(in_buf));
-    in.open(infile);
-
-    if (!in.is_open()) {
+// mmap-based single-pass streaming parser.
+static void parseFastqFile(const string& infile, const string& outfile, FastqGlobalStats& stats, const int qmin, bool per_seq_stats) {
+    // Memory-map the input file
+    int fd = open(infile.c_str(), O_RDONLY);
+    if (fd < 0) {
         cerr << "Error: The file " << infile << " could not be opened." << endl;
         return;
     }
+
+    // Get file size and map it into memory
+    struct stat sb;
+    if (fstat(fd, &sb) < 0) {
+        cerr << "Error: fstat failed for " << infile << endl;
+        close(fd); return;
+    }
+    size_t filesize = (size_t)sb.st_size;
+
+    const char* data = static_cast<const char*>(
+        mmap(nullptr, filesize, PROT_READ, MAP_PRIVATE, fd, 0));
+
+    close(fd);  // fd no longer needed after mmap
+
+    if (data == MAP_FAILED) {
+        cerr << "Error: mmap failed for " << infile << endl;
+        return;
+    }
+    
+    // Tell the kernel we will read this linearly, so we can read ahead
+    madvise(const_cast<char*>(data), filesize, MADV_SEQUENTIAL);
 
     static char out_buf[IO_BUFFER_SIZE];
     ofstream out;
@@ -25,6 +47,8 @@ static void parseFastqFile(const string& infile, const string& outfile, FastqGlo
         out.open(outfile);
         if (!out.is_open()) {
             cerr << "Error: The file " << outfile << " could not be opened/created." << endl;
+            // Free the mapped memory before returning
+            munmap(const_cast<char*>(data), filesize);
             return;
         }
     }
@@ -35,54 +59,92 @@ static void parseFastqFile(const string& infile, const string& outfile, FastqGlo
     stats.minimum        = LLONG_MAX;
     stats.maximum        = 0LL;
 
-    string header, sequence, separator, quality;
+    const char* p   = data;
+    const char* end = data + filesize;
 
-    while (getline(in, header)) {
-        if (header.empty()) continue;
-        if (header[0] != '@') continue;
+    while (p < end) {
+        // Skip blank lines between records
+        while (p < end && ((unsigned char)*p <= (unsigned char)'\r')) ++p;
+        if (p >= end) break;
 
-        if (!getline(in, sequence))  break;
-        if (!getline(in, separator)) break;
-        if (!getline(in, quality))   break;
+        // Expect '@' to start a record; skip corrupted lines
+        if (*p != '@') {
+            // Find next newline, starts at p and ends at nl (if nl is null, end of file reached)
+            const char* nl = static_cast<const char*>(memchr(p, '\n', (size_t)(end - p)));
+            p = nl ? nl + 1 : end;
+            continue;
+        }
 
-        if (sequence.size() != quality.size())
+        // Line 1: header (p points at '@')
+        const char* nl1 = static_cast<const char*>(memchr(p, '\n', (size_t)(end - p)));
+        if (!nl1) break;
+        const char* hdr_start = p + 1;                           // skip '@'
+        size_t      hdr_len   = (size_t)(nl1 - hdr_start);
+        if (hdr_len && hdr_start[hdr_len - 1] == '\r') --hdr_len; // strip \r in case of Windows line endings
+
+        // Line 2: sequence
+        const char* seq_start = nl1 + 1;
+        const char* nl2 = static_cast<const char*>(memchr(seq_start, '\n', (size_t)(end - seq_start)));
+        if (!nl2) break;
+        size_t seq_len = (size_t)(nl2 - seq_start);
+        if (seq_len && seq_start[seq_len - 1] == '\r') --seq_len;
+
+        // Line 3: '+' separator
+        const char* sep_start = nl2 + 1;
+        const char* nl3 = static_cast<const char*>(memchr(sep_start, '\n', (size_t)(end - sep_start)));
+        if (!nl3) break;
+        size_t sep_len = (size_t)(nl3 - sep_start);
+        if (sep_len && sep_start[sep_len - 1] == '\r') --sep_len;
+
+        // Line 4: quality
+        const char* qual_start = nl3 + 1;
+        const char* nl4 = static_cast<const char*>(memchr(qual_start, '\n', (size_t)(end - qual_start)));
+        const char* qual_end = nl4 ? nl4 : end; // quality line may be last line of file without trailing newline
+        size_t qual_len = (size_t)(qual_end - qual_start);
+        if (qual_len && qual_start[qual_len - 1] == '\r') --qual_len;
+
+        if (seq_len != qual_len)
             throw runtime_error("[parseFastqFile] sequence length != quality sequence length");
 
-        // In-place quality trimming using SWAR vectorised scan (see utils.hpp)
-        if (qmin > 0) {
-            size_t trim = get_trim_limit(quality, qmin);
-            sequence.resize(trim);
-            quality.resize(trim);
-        }
+        // Quality trimming: SWAR scan directly on mapped buffer (no copy)
+        size_t keep = seq_len;
+        if (qmin > 0) keep = get_trim_limit(qual_start, qual_len, qmin);
 
-        // Write full FASTQ record with raw write() to avoid << format overhead
+        // Write trimmed record
         if (out.is_open()) {
-            out.write(header.data(),    (streamsize)header.size());    out.put('\n');
-            out.write(sequence.data(),  (streamsize)sequence.size());  out.put('\n');
-            out.write(separator.data(), (streamsize)separator.size()); out.put('\n');
-            out.write(quality.data(),   (streamsize)quality.size());   out.put('\n');
+            out.put('@');
+            out.write(hdr_start,  (streamsize)hdr_len);  out.put('\n');
+            out.write(seq_start,  (streamsize)keep);     out.put('\n');
+            out.put('+');                                out.put('\n');
+            out.write(qual_start, (streamsize)keep);     out.put('\n');
         }
 
-        // Bulk GC count
-        long long len = (long long)sequence.size();
-        long long gc  = count_gc_bulk(sequence.data(), (size_t)len);
+        // Stats
+        long long gc  = count_gc_bulk(seq_start, keep);
+        long long len = (long long)keep;
 
-        SequenceStats sStats;
-        sStats.length     = len;
-        sStats.gc_count   = gc;
-        sStats.gc_content = (len > 0) ? (double)gc / len * 100.0 : 0.0;
-
-        stats.per_sequence.emplace(header.substr(1), sStats);
         stats.total_length   += len;
         stats.total_gc_count += gc;
         if (len < stats.minimum) stats.minimum = len;
         if (len > stats.maximum) stats.maximum = len;
         ++stats.num_sequences;
+
+        // Per-sequence entry: only when explicitly requested (expensive for large files)
+        if (per_seq_stats) {
+            SequenceStats sStats;
+            sStats.length     = len;
+            sStats.gc_count   = gc;
+            sStats.gc_content = (len > 0) ? (double)gc / len * 100.0 : 0.0;
+            stats.per_sequence.emplace(string(hdr_start, hdr_len), sStats);
+        }
+
+        p = nl4 ? nl4 + 1 : end;
     }
 
+    munmap(const_cast<char*>(data), filesize);
+
     stats.overall_gc_content = (stats.total_length > 0)
-        ? (double)stats.total_gc_count / stats.total_length * 100.0
-        : 0.0;
+        ? (double)stats.total_gc_count / stats.total_length * 100.0 : 0.0;
     stats.avg_read_len = (stats.num_sequences > 0)
         ? stats.total_length / stats.num_sequences : 0;
 }
@@ -93,33 +155,30 @@ void printStatistics(const FastqGlobalStats& stats) {
     cout << "       SUMMARY GENOMIC ANALYSIS" << endl;
     cout << "============================================" << endl;
     cout << "Number of processed sequences: " << stats.num_sequences << endl;
-    cout << "--------------------------------------------" << endl;
-
-    // Iterem sobre el map per mostrar cada seqüència
-    // it.first és la clau (header), it.second és l'objecte SequenceStats
-    for (auto const& [header, sStats] : stats.per_sequence) {
-        cout << "ID: " << header << endl;
-        cout << "  > Length: " << sStats.length << " bp" << endl;
-        cout << "  > GC content: " << fixed << setprecision(2) << sStats.gc_content << "%" << endl;
-        cout << endl;
+    if (!stats.per_sequence.empty()) {
+        cout << "--------------------------------------------" << endl;
+        for (auto const& [header, sStats] : stats.per_sequence) {
+            cout << "ID: " << header << endl;
+            cout << "  > Length: " << sStats.length << " bp" << endl;
+            cout << "  > GC content: " << fixed << setprecision(2) << sStats.gc_content << "%" << endl;
+            cout << endl;
+        }
     }
-
     cout << "--------------------------------------------" << endl;
     cout << "GLOBAL SUMMARY:" << endl;
-    cout << "  > Total lenght: " << stats.total_length << " bp" << endl;
+    cout << "  > Total length: "     << stats.total_length   << " bp" << endl;
     cout << "  > Total GC content: " << fixed << setprecision(2) << stats.overall_gc_content << "%" << endl;
-    cout << "  > Minimum read: " << stats.minimum << " bp" << endl;
-    cout << "  > Maximum read: " << stats.maximum << " bp" << endl;
-    cout << "  > Avg length read: " << stats.avg_read_len << " bp" << endl;
+    cout << "  > Minimum read: "     << stats.minimum        << " bp" << endl;
+    cout << "  > Maximum read: "     << stats.maximum        << " bp" << endl;
+    cout << "  > Avg length read: "  << stats.avg_read_len   << " bp" << endl;
     cout << "============================================" << endl;
 }
 
-int fastq_parser(const string& input_file, const string& output_file, const int qmin) {
+int fastq_parser(const string& input_file, const string& output_file, const int qmin, bool per_seq_stats) {
 
     FastqGlobalStats stats;
 
-    // Single-pass to parse and compute stats simultaneously
-    parseFastqFile(input_file, output_file, stats, qmin);
+    parseFastqFile(input_file, output_file, stats, qmin, per_seq_stats);
 
     if (stats.num_sequences == 0) {
         cout << "No sequences found." << endl;
@@ -129,3 +188,4 @@ int fastq_parser(const string& input_file, const string& output_file, const int 
     printStatistics(stats);
     return 0;
 }
+

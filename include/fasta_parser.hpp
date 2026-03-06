@@ -18,6 +18,6 @@ struct FastaRecord {
     string sequence;
 };
 
-int fasta_parser(const string& input_file, const string& output_file = "", const unsigned int kmer_length = 0);
+int fasta_parser(const string& input_file, const string& output_file = "", const unsigned int kmer_length = 0, bool per_seq_stats = false);
 
 #endif

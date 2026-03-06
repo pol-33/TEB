@@ -1,99 +1,124 @@
 #include "fasta_parser.hpp"
+#include <sys/mman.h>   // mmap / munmap / madvise
+#include <sys/stat.h>   // fstat
+#include <fcntl.h>      // open
+#include <unistd.h>     // close
 
 #define KMER_INDEX_SIZE 10
 
 using namespace std;
 
-// Compute statistics
-static inline void computeStatistics(GlobalStats& gStats, SequenceStats& seqStats, const string& sequence) {
-    long long chars_read = sequence.length();
-    gStats.total_length += chars_read;
-    seqStats.length    += chars_read;
-
-    long long local_gc = count_gc_bulk(sequence.data(), (size_t)chars_read);
-    gStats.total_gc_count += local_gc;
-    seqStats.gc_count     += local_gc;
-
-    // Calculate global GC from cumulative totals (not just this line)
-    gStats.overall_gc_content = (gStats.total_length > 0)
-                        ? (double)gStats.total_gc_count / gStats.total_length * 100.0
-                        : 0.0;
-    return;
-}
-
-// Parsing of the FASTA file
-void parseFastaFile(const string& infile, const string& outfile, GlobalStats& stats, const unsigned int kmer_length) {
-    // Set large buffer BEFORE open() so the streambuf uses it from the first read
-    static char in_buf[IO_BUFFER_SIZE];
-    ifstream in;
-    in.rdbuf()->pubsetbuf(in_buf, sizeof(in_buf));
-    in.open(infile);
-
-    if (!in.is_open()) {
+// mmap-based single-pass FASTA parser.
+// Uses memchr to find newlines (~32 bytes/cycle via SIMD libc), count_gc_bulk
+// directly on the mapped buffer (zero copies), and a 1 MB write buffer for output.
+static void parseFastaFile(const string& infile, const string& outfile, GlobalStats& stats, const unsigned int kmer_length, bool per_seq_stats) {
+    // Memory-map the input file
+    int fd = open(infile.c_str(), O_RDONLY);
+    if (fd < 0) {
         cerr << "Error: The file " << infile << " could not be opened." << endl;
         return;
     }
 
+    // Get file size and map it into memory
+    struct stat sb;
+    if (fstat(fd, &sb) < 0) {
+        cerr << "Error: fstat failed for " << infile << endl;
+        close(fd); return;
+    }
+    size_t filesize = (size_t)sb.st_size;
+    
+    const char* data = static_cast<const char*>(
+        mmap(nullptr, filesize, PROT_READ, MAP_PRIVATE, fd, 0));
+
+    close(fd);  // fd no longer needed after mmap
+
+    if (data == MAP_FAILED) {
+        cerr << "Error: mmap failed for " << infile << endl;
+        return;
+    }
+    // Tell the kernel we will read this linearly, so we can read ahead
+    madvise(const_cast<char*>(data), filesize, MADV_SEQUENTIAL);
+
+
     static char out_buf[IO_BUFFER_SIZE];
     ofstream out;
-    kmer_table_t kmer_indxs;
-    
     if (!outfile.empty()) {
         out.rdbuf()->pubsetbuf(out_buf, sizeof(out_buf));
         out.open(outfile);
         if (!out.is_open()) {
             cerr << "Error: The file " << outfile << " could not be opened/created." << endl;
+            // Free the mapped memory before returning
+            munmap(const_cast<char*>(data), filesize);
             return;
         }
     }
 
-    string line;
-    string current_header = "";
+    kmer_table_t kmer_indxs;
+
+    const char* p   = data;
+    const char* end = data + filesize;
+
+    string current_header;
     SequenceStats cur_seq = {0, 0, 0.0};
 
-    // Helper: finalise current sequence into the per_sequence map
+    // Finalise current sequence: only populate per_sequence map when requested.
     auto finalizeSequence = [&]() {
-        if (!current_header.empty()) {
+        if (!current_header.empty() && per_seq_stats) {
             cur_seq.gc_content = (cur_seq.length > 0)
-                ? (double)cur_seq.gc_count / cur_seq.length * 100.0
-                : 0.0;
+                ? (double)cur_seq.gc_count / cur_seq.length * 100.0 : 0.0;
             stats.per_sequence[current_header] = cur_seq;
         }
     };
 
-    while (getline(in, line)) {
-        if (line.empty()) continue;
+    while (p < end) {
+        // Find next newline, starts at p and ends at nl (if nl is null, end of file reached)
+        const char* nl = static_cast<const char*>(memchr(p, '\n', (size_t)(end - p)));
+        const char* line_end = nl ? nl : end;
+        size_t line_len = (size_t)(line_end - p);
 
-        // Character '>', indicates new header
-        if (line[0] == '>') {
+        // Strip trailing \r (Windows / mixed line endings)
+        if (line_len && p[line_len - 1] == '\r') --line_len;
+
+        if (line_len == 0) { p = nl ? nl + 1 : end; continue; }  // skip blank lines
+
+        if (*p == '>') {
             finalizeSequence();
-            current_header = line.substr(1);
+            if (!current_header.empty()) out.put('\n');  // Finish previous record with a newline
+            current_header.assign(p + 1, line_len - 1);  // text after '>'
             cur_seq = {0, 0, 0.0};
-            stats.num_sequences += 1;
+            ++stats.num_sequences;
             if (out.is_open()) {
-                out.put('>');
-                out.write(current_header.data(), (streamsize)current_header.size());
+                out.write(p, (streamsize)line_len);  // includes '>'
                 out.put('\n');
             }
         } else {
-            // Sequence line: raw write avoids format overhead
+            // Sequence line: bulk GC directly on mapped buffer
+            long long gc = count_gc_bulk(p, line_len);
+            stats.total_length   += (long long)line_len;
+            stats.total_gc_count += gc;
+            cur_seq.length       += (long long)line_len;
+            cur_seq.gc_count     += gc;
             if (out.is_open()) {
-                out.write(line.data(), (streamsize)line.size());
-                out.put('\n');
+                // Concatenate sequence lines until the next header
+                out.write(p, (streamsize)line_len);
             }
-            computeStatistics(stats, cur_seq, line);
-            if (kmer_length > 0) update_kmer_table(line, kmer_indxs, kmer_length);
+            if (kmer_length > 0)
+                update_kmer_table(string(p, line_len), kmer_indxs, kmer_length);
         }
+
+        p = nl ? nl + 1 : end;
     }
-    finalizeSequence(); // store the last sequence
+    finalizeSequence();  // store the last sequence
+
+    stats.overall_gc_content = (stats.total_length > 0)
+        ? (double)stats.total_gc_count / stats.total_length * 100.0 : 0.0;
+
+    // Free the mapped memory
+    munmap(const_cast<char*>(data), filesize);
 
     #ifdef DEBUG
     print_kmer_table(kmer_indxs);
     #endif
-
-    in.close();
-    out.close();
-    return;
 }
 
 // Print the statistics
@@ -102,36 +127,39 @@ void printStatistics(const GlobalStats& stats) {
     cout << "       SUMMARY GENOMIC ANALYSIS" << endl;
     cout << "============================================" << endl;
     cout << "Number of processed sequences: " << stats.num_sequences << endl;
-    cout << "--------------------------------------------" << endl;
-    for (const auto& [id, seq] : stats.per_sequence) {
-        cout << "ID: " << id << endl;
-        cout << "  > Length: " << seq.length << " bp" << endl;
-        cout << "  > GC content: " << fixed << setprecision(2) << seq.gc_content << "%" << endl;
-        cout << endl;
+
+    // Per-sequence block is printed only when the map was populated (per_seq_stats=true).
+    if (!stats.per_sequence.empty()) {
         cout << "--------------------------------------------" << endl;
+        for (const auto& [id, seq] : stats.per_sequence) {
+            cout << "ID: " << id << endl;
+            cout << "  > Length: " << seq.length << " bp" << endl;
+            cout << "  > GC content: " << fixed << setprecision(2) << seq.gc_content << "%" << endl;
+            cout << endl;
+            cout << "--------------------------------------------" << endl;
+        }
     }
+
     cout << "GLOBAL SUMMARY:" << endl;
     cout << "  > Total length: " << stats.total_length << " bp" << endl;
     cout << "  > Total GC content: " << fixed << setprecision(2) << stats.overall_gc_content << "%" << endl;
     cout << "============================================" << endl;
 }
 
-int fasta_parser(const string& input_file, const string& output_file, const unsigned int kmer_length) {
-
+int fasta_parser(const string& input_file, const string& output_file, const unsigned int kmer_length, bool per_seq_stats) {
     GlobalStats stats;
     stats.num_sequences = 0;
     stats.total_length = 0;
     stats.total_gc_count = 0;
 
-    // Step 1: READING
-    parseFastaFile(input_file, output_file, stats, kmer_length);
+    parseFastaFile(input_file, output_file, stats, kmer_length, per_seq_stats);
     if (stats.num_sequences == 0) {
         cout << "No sequences found." << endl;
         return 0;
     }
 
-    // Step 2: PRINTING STATS
     printStatistics(stats);
 
     return 0;
 }
+

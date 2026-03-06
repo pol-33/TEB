@@ -1,6 +1,6 @@
 # Variables
 CXX = g++
-CXXFLAGS = -Wall -Wextra -std=c++17 -O3 -I include/
+CXXFLAGS = -Wall -Wextra -std=c++17 -O3 -march=native -I include/
 DEBUGFLAGS = -DDEBUG -g
 
 TARGET = teb.exe

@@ -74,29 +74,27 @@ static inline long long count_gc_bulk(const char* __restrict__ data, size_t len)
 // to every byte. If byte >= limit then byte + offset >= 128, so bit7 flips to 1.
 // Because quality bytes are ASCII [33..126] and offset <= 95, no byte ever exceeds
 // 255, so there is NO carry between bytes in the 64-bit add.
-static inline size_t get_trim_limit(const string& quality, int qmin) {
-    if (quality.empty()) return 0;
+static inline size_t get_trim_limit(const char* qual_data, size_t len, int qmin) {
+    if (len == 0) return 0;
 
-    long long len = (long long)quality.size();
-    long long i   = len - 1;
+    long long n   = (long long)len;
+    long long i   = n - 1;
     int limit     = qmin + 33;
 
-    // 1. Fast-path: if the last base is already good, return immediately.
-    //    This is the common case for high-quality reads (saves the whole scan).
-    if ((unsigned char)quality[i] >= limit) return (size_t)len;
+    // 1. Fast-path: last base is already good (common case), return immediately
+    if ((unsigned char)qual_data[i] >= limit) return len;
 
-    // 2. SWAR scan: process 8 bytes per iteration backwards.
+    // 2. SWAR backwards scan (8 bytes per iteration).
     //    Build magic_add so that every byte equals (128 - limit).
     uint64_t magic_add = 0;
     memset(&magic_add, (uint8_t)(128 - limit), 8);
 
-    for (i = len - 8; i >= 0; i -= 8) {
+    for (i = n - 8; i >= 0; i -= 8) {
         uint64_t chunk;
-        memcpy(&chunk, quality.data() + i, 8);
-
+        memcpy(&chunk, qual_data + i, 8);
+        
         // After adding, bit7 of a byte is 1 iff original byte >= limit.
         uint64_t result = (chunk + magic_add) & UINT64_C(0x8080808080808080);
-
         if (result != 0) {
             int leading_zeros = __builtin_clzll(result);
             int byte_index    = 7 - (leading_zeros / 8);
@@ -104,9 +102,9 @@ static inline size_t get_trim_limit(const string& quality, int qmin) {
         }
     }
 
-    // 3. Scalar tail for the up-to-7 bytes that preceded the first aligned chunk.
+    // 3. Scalar tail (up to 7 remaining bytes).
     for (i += 7; i >= 0; --i) {
-        if ((unsigned char)quality[i] >= limit) return (size_t)(i + 1);
+        if ((unsigned char)qual_data[i] >= limit) return (size_t)(i + 1);
     }
 
     return 0; // every base is below qmin

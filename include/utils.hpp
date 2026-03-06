@@ -12,6 +12,10 @@ using namespace std;
 #define CACHE_BLOCK_SIZE 0
 #define NUMBER_CORES 0
 #define IO_BUFFER_SIZE (1 << 20)
+// Size of each slab released to the OS via MADV_DONTNEED in low-memory mode.
+// Must be a multiple of the page size (4 KB); 4 MB is a good trade-off between
+// syscall overhead and RSS granularity.
+#define MADV_DONTNEED_CHUNK (4UL * 1024UL * 1024UL)
 
 typedef unordered_map<string,vector<int>> kmer_table_t;
 

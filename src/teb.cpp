@@ -24,6 +24,9 @@ struct Config {
     int qmin = 0;
     unsigned int kmer_length = 0;
     bool per_seq_stats = false;
+    bool low_mem = true;              // streaming is the default
+    bool use_mmap = false;            // opt-in: --mmap
+    size_t stream_buf_bytes = (size_t)(0.5 * 1024UL * 1024UL);  // default 0.5 MB
 };
 
 void usage() {
@@ -36,6 +39,9 @@ void usage() {
     cout << "\t\t -qmin <int value> Minimum Quality for bases (FASTQ only)\n";
     cout << "\t\t -k <int value>    Kmer length for preprocessing text\n";
     cout << "\t\t -s                Print per-sequence statistics (off by default)\n";
+    cout << "\t\t -m [MB]           Streaming buffer size in MB (default 0.5; streaming is ON by default)\n";
+    cout << "\t\t                   e.g. -m 0.5, -m 3, -m 64  (float MB accepted)\n";
+    cout << "\t\t --mmap            Use mmap instead of streaming (lower syscall count, higher RSS)\n";
 }
 
 Config parse_args(int argc, char* argv[]) {
@@ -63,6 +69,20 @@ Config parse_args(int argc, char* argv[]) {
             cfg.kmer_length = stoi(argv[++i]);
         } else if (arg == "-s") {
             cfg.per_seq_stats = true;
+        } else if (arg == "-m") {
+            cfg.low_mem = true;
+            // Optional next arg: buffer size in MB (float accepted)
+            if (i + 1 < argc) {
+                char* endptr;
+                double mb = strtod(argv[i + 1], &endptr);
+                if (endptr != argv[i + 1] && *endptr == '\0' && mb > 0.0) {
+                    cfg.stream_buf_bytes = (size_t)(mb * 1024.0 * 1024.0);
+                    ++i;
+                }
+            }
+        } else if (arg == "--mmap") {
+            cfg.use_mmap = true;
+            cfg.low_mem  = false;
         } else throw runtime_error("[parse_args] Unknown argument: " + arg);
     }
 
@@ -77,8 +97,8 @@ int main(int argc, char* argv[]) {
     try {
         Config cfg = parse_args(argc, argv);
 
-        if (cfg.format == Format::FASTA) fasta_parser(cfg.input, cfg.output, cfg.kmer_length, cfg.per_seq_stats);
-        else if (cfg.format == Format::FASTQ) fastq_parser(cfg.input, cfg.output, cfg.qmin, cfg.per_seq_stats);
+        if (cfg.format == Format::FASTA) fasta_parser(cfg.input, cfg.output, cfg.kmer_length, cfg.per_seq_stats, cfg.low_mem, cfg.stream_buf_bytes);
+        else if (cfg.format == Format::FASTQ) fastq_parser(cfg.input, cfg.output, cfg.qmin, cfg.per_seq_stats, cfg.low_mem, cfg.stream_buf_bytes);
 
     } catch (const exception& e) {
         cerr << "Error: " << e.what() << "\n";

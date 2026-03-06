@@ -23,6 +23,6 @@ struct FastqGlobalStats : public GlobalStats {
     long long avg_read_len;
 };
 
-int fastq_parser(const string& input_file, const string& output_file = "", const int qmin = 0, bool per_seq_stats = false);
+int fastq_parser(const string& input_file, const string& output_file = "", const int qmin = 0, bool per_seq_stats = false, bool low_mem = true, size_t stream_buf = (size_t)(0.5 * 1024UL * 1024UL));
 
 #endif

@@ -39,7 +39,7 @@ FASTQ_RUNS=1   # keep at 1 unless you have ~8 min free per extra run
 # ── Commits ───────────────────────────────────────────────────────────────────
 # Format: "short_hash:Label shown in table"
 FASTA_COMMITS=(
-    "0126f47:Make output file optional; add README"
+    "0126f47:Make output file optional; add README:long"
     "c30cffa:Updating Kmer table + exercises"
     "8441748:Merge fixes"
     "58cca05:Optimize parsers"
@@ -59,21 +59,21 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# single_run <out_path> <binary> [extra_args...]
+# single_run <out_path> <out_flag> <binary> [extra_args...]
 #
-#   Executes:  /usr/bin/time -l <binary> [extra_args...] -o <out_path>
+#   Executes:  /usr/bin/time -l <binary> [extra_args...] <out_flag> <out_path>
 #   Discards program stdout (stats lines) with >/dev/null.
 #   Captures /usr/bin/time stderr to a temp file, then parses it with awk.
 #   Prints one line to stdout:
 #     real_s  user_s  sys_s  instructions  cycles  rss_bytes  page_faults
 # ─────────────────────────────────────────────────────────────────────────────
 single_run() {
-    local out_path="$1"; shift
+    local out_path="$1" out_flag="$2"; shift 2
     local tmpf; tmpf=$(mktemp)
 
     # Redirect program stdout to /dev/null (parser stat printout is O(1) but
     # adds noise); capture /usr/bin/time report from stderr.
-    { /usr/bin/time -l "$@" -o "$out_path" > /dev/null ; } 2>"$tmpf"
+    { /usr/bin/time -l "$@" "$out_flag" "$out_path" > /dev/null ; } 2>"$tmpf"
 
     awk '
         # First line of /usr/bin/time -l: "  real_s real   user_s user   sys_s sys"
@@ -127,7 +127,16 @@ benchmark_suite() {
 
     for entry in "${_commits[@]}"; do
         local hash="${entry%%:*}"
-        local label="${entry#*:}"
+        local rest="${entry#*:}"      # "label" or "label:long"
+        local label="${rest%%:*}"     # always the label
+        local flags_style=""
+        [[ "$rest" == *:* ]] && flags_style="${rest#*:}"
+
+        # Select short or long CLI flags based on per-entry annotation
+        local f_in="-i" f_fmt="-f" f_out="-o"
+        if [[ "${flags_style:-}" == "long" ]]; then
+            f_in="--input"; f_fmt="--format"; f_out="--output"
+        fi
 
         # ── Checkout & build ─────────────────────────────────────────────────
         printf "  %s● building  %s  →  %s%s\n" "$YEL" "$hash" "$label" "$RST" >&2
@@ -153,7 +162,7 @@ benchmark_suite() {
 
         # ── Warm-up run (page-cache priming, not measured) ───────────────────
         printf "  %s  warm-up ...%s\r" "$DIM" "$RST" >&2
-        "$binary" -i "$inp" -f "$fmt" -o "$out_path" > /dev/null 2>&1 || true
+        "$binary" "$f_in" "$inp" "$f_fmt" "$fmt" "$f_out" "$out_path" > /dev/null 2>&1 || true
 
         # ── Timed runs ───────────────────────────────────────────────────────
         local sum_real=0 sum_cpu=0 sum_instr=0 sum_cycles=0 sum_pf=0
@@ -164,7 +173,7 @@ benchmark_suite() {
 
             local real user sys instr cycles rss pf
             read -r real user sys instr cycles rss pf < <(
-                single_run "$out_path" "$binary" -i "$inp" -f "$fmt"
+                single_run "$out_path" "$f_out" "$binary" "$f_in" "$inp" "$f_fmt" "$fmt"
             ) || true
 
             local cpu; cpu=$(awk "BEGIN{printf \"%.6f\", $user + $sys}")

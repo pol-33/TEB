@@ -44,18 +44,18 @@ FASTA_COMMITS=(
     "8441748:Merge fixes"
     "58cca05:Optimize parsers"
     "b3e0979:mmap + per-seq flag (HEAD)"
-    "e975167:-m 64 MB::-m 64"
-    "e975167:-m 3 MB::-m 3"
-    "e975167:-m 0.5 MB::-m 0.5"
-    "e975167:-m 0.1 MB::-m 0.1"
+    "d37b251:-m 64 MB::-m 64"
+    "d37b251:-m 3 MB::-m 3"
+    "d37b251:-m 0.5 MB::-m 0.5"
+    "d37b251:-m 0.1 MB::-m 0.1"
 )
 FASTQ_COMMITS=(
     "58cca05:Optimize parsers"
     "b3e0979:mmap + per-seq flag (HEAD)"
-    "e975167:-m 64 MB::-m 64"
-    "e975167:-m 3 MB::-m 3"
-    "e975167:-m 0.5 MB::-m 0.5"
-    "e975167:-m 0.1 MB::-m 0.1"
+    "d37b251:-m 64 MB::-m 64"
+    "d37b251:-m 3 MB::-m 3"
+    "d37b251:-m 0.5 MB::-m 0.5"
+    "d37b251:-m 0.1 MB::-m 0.1"
 )
 
 # ── Colours (disabled when stdout is not a terminal) ─────────────────────────

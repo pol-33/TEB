@@ -44,13 +44,11 @@ FASTA_COMMITS=(
     "8441748:Merge fixes"
     "58cca05:Optimize parsers"
     "b3e0979:mmap + per-seq flag (HEAD)"
-    "f320be9:Low-mem (mmap, default)"
     "f320be9:Low-mem (-m streaming)::-m"
 )
 FASTQ_COMMITS=(
     "58cca05:Optimize parsers"
     "b3e0979:mmap + per-seq flag (HEAD)"
-    "f320be9:Low-mem (mmap, default)"
     "f320be9:Low-mem (-m streaming)::-m"
 )
 
@@ -177,8 +175,8 @@ benchmark_suite() {
         "$binary" "$f_in" "$inp" "$f_fmt" "$fmt" $extra_flags "$f_out" "$out_path" > /dev/null 2>&1 || true
 
         # ── Timed runs ───────────────────────────────────────────────────────
-        local sum_real=0 sum_cpu=0 sum_instr=0 sum_cycles=0 sum_pf=0
-        local min_real=9999999 max_rss=0
+        local sum_real=0 sum_cpu=0 sum_instr=0 sum_cycles=0 sum_pf=0 sum_rss=0
+        local min_real=9999999
 
         for ((r = 1; r <= nruns; r++)); do
             printf "  %s  run %d / %d  ...%s\r" "$DIM" "$r" "$nruns" "$RST" >&2
@@ -188,14 +186,14 @@ benchmark_suite() {
                 single_run "$out_path" "$f_out" "$binary" "$f_in" "$inp" "$f_fmt" "$fmt" $extra_flags
             ) || true
 
-            max_rss=$(awk "BEGIN{ print ($rss > $max_rss) ? $rss : $max_rss }")
-            local cpu; cpu=$(awk "BEGIN{printf \"%.6f\", $user + $sys}")
             min_real=$(awk "BEGIN{ print ($real < $min_real) ? $real : $min_real }")
+            local cpu; cpu=$(awk "BEGIN{printf \"%.6f\", $user + $sys}")
             sum_real=$(awk   "BEGIN{printf \"%.6f\", $sum_real  + $real  }")
             sum_cpu=$(awk    "BEGIN{printf \"%.6f\", $sum_cpu   + $cpu   }")
             sum_instr=$(awk  "BEGIN{printf \"%.0f\", $sum_instr + $instr }")
             sum_cycles=$(awk "BEGIN{printf \"%.0f\", $sum_cycles+ $cycles}")
             sum_pf=$(awk     "BEGIN{printf \"%.0f\", $sum_pf    + $pf    }")
+            sum_rss=$(awk    "BEGIN{printf \"%.0f\", $sum_rss   + $rss   }")
         done
 
         printf "%-60s\r" "" >&2  # erase progress line
@@ -206,7 +204,7 @@ benchmark_suite() {
         avg_cpu=$(awk   "BEGIN{printf \"%.3f\", $sum_cpu   / $nruns      }")
         m_instr=$(awk   "BEGIN{printf \"%.1f\", $sum_instr / $nruns / 1e6}")
         m_cycles=$(awk  "BEGIN{printf \"%.1f\", $sum_cycles/ $nruns / 1e6}")
-        rss_mb=$(awk    "BEGIN{printf \"%.1f\", $max_rss   / 1048576     }")
+        rss_mb=$(awk    "BEGIN{printf \"%.1f\", $sum_rss    / $nruns / 1048576}")
         ipc=$(awk       "BEGIN{c=$sum_cycles; printf \"%.2f\", (c>0) ? $sum_instr/c : 0}")
         avg_pf=$(awk    "BEGIN{printf \"%.0f\", $sum_pf    / $nruns      }")
 

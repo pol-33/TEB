@@ -158,17 +158,15 @@ static void parseFastqFile(const string& infile, const string& outfile, FastqGlo
 // counted in process RSS, so peak RSS stays bounded at ~buffer size regardless
 // of the file size.
 // ─────────────────────────────────────────────────────────────────────────────
-static const size_t FASTQ_STREAM_BUF = 64UL * 1024UL * 1024UL;  // 64 MB
-
 static void parseFastqFileStream(const string& infile, const string& outfile,
-                                  FastqGlobalStats& stats, const int qmin, bool per_seq_stats) {
+                                  FastqGlobalStats& stats, const int qmin, bool per_seq_stats, size_t stream_buf) {
     int fd = open(infile.c_str(), O_RDONLY);
     if (fd < 0) {
         cerr << "Error: The file " << infile << " could not be opened." << endl;
         return;
     }
 
-    vector<char> buf(FASTQ_STREAM_BUF);
+    vector<char> buf(stream_buf);
 
     static char out_buf[IO_BUFFER_SIZE];
     ofstream out;
@@ -192,7 +190,7 @@ static void parseFastqFileStream(const string& infile, const string& outfile,
 
     while (!eof || filled > 0) {
         if (!eof) {
-            ssize_t n = read(fd, buf.data() + filled, FASTQ_STREAM_BUF - filled);
+            ssize_t n = read(fd, buf.data() + filled, stream_buf - filled);
             if (n <= 0) { eof = true; }
             else        { filled += (size_t)n; }
         }
@@ -278,8 +276,8 @@ static void parseFastqFileStream(const string& infile, const string& outfile,
             memmove(buf.data(), p, leftover);
         filled = leftover;
 
-        if (!eof && filled == FASTQ_STREAM_BUF)
-            throw runtime_error("[parseFastqFileStream] record exceeds 64 MB buffer");
+        if (!eof && filled == stream_buf)
+            throw runtime_error("[parseFastqFileStream] record exceeds buffer size");
     }
 
     close(fd);
@@ -315,12 +313,12 @@ void printStatistics(const FastqGlobalStats& stats) {
     cout << "============================================" << endl;
 }
 
-int fastq_parser(const string& input_file, const string& output_file, const int qmin, bool per_seq_stats, bool low_mem) {
+int fastq_parser(const string& input_file, const string& output_file, const int qmin, bool per_seq_stats, bool low_mem, size_t stream_buf) {
 
     FastqGlobalStats stats;
 
     if (low_mem)
-        parseFastqFileStream(input_file, output_file, stats, qmin, per_seq_stats);
+        parseFastqFileStream(input_file, output_file, stats, qmin, per_seq_stats, stream_buf);
     else
         parseFastqFile(input_file, output_file, stats, qmin, per_seq_stats);
 

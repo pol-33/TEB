@@ -128,17 +128,15 @@ static void parseFastaFile(const string& infile, const string& outfile, GlobalSt
 // Uses read() with a 64 MB rolling buffer instead of mmap so that only the
 // buffer lives in the process's RSS, not the entire file.
 // ─────────────────────────────────────────────────────────────────────────────
-static const size_t FASTA_STREAM_BUF = 64UL * 1024UL * 1024UL;  // 64 MB
-
 static void parseFastaFileStream(const string& infile, const string& outfile,
-                                  GlobalStats& stats, const unsigned int kmer_length, bool per_seq_stats) {
+                                  GlobalStats& stats, const unsigned int kmer_length, bool per_seq_stats, size_t stream_buf) {
     int fd = open(infile.c_str(), O_RDONLY);
     if (fd < 0) {
         cerr << "Error: The file " << infile << " could not be opened." << endl;
         return;
     }
 
-    vector<char> buf(FASTA_STREAM_BUF);
+    vector<char> buf(stream_buf);
 
     static char out_buf[IO_BUFFER_SIZE];
     ofstream out;
@@ -168,7 +166,7 @@ static void parseFastaFileStream(const string& infile, const string& outfile,
 
     while (!eof || filled > 0) {
         if (!eof) {
-            ssize_t n = read(fd, buf.data() + filled, FASTA_STREAM_BUF - filled);
+            ssize_t n = read(fd, buf.data() + filled, stream_buf - filled);
             if (n <= 0) { eof = true; }
             else        { filled += (size_t)n; }
         }
@@ -221,8 +219,8 @@ static void parseFastaFileStream(const string& infile, const string& outfile,
             memmove(buf.data(), p, leftover);
         filled = leftover;
 
-        if (!eof && filled == FASTA_STREAM_BUF)
-            throw runtime_error("[parseFastaFileStream] line exceeds 64 MB buffer");
+        if (!eof && filled == stream_buf)
+            throw runtime_error("[parseFastaFileStream] line exceeds buffer size");
     }
 
     finalizeSequence();
@@ -262,14 +260,14 @@ void printStatistics(const GlobalStats& stats) {
     cout << "============================================" << endl;
 }
 
-int fasta_parser(const string& input_file, const string& output_file, const unsigned int kmer_length, bool per_seq_stats, bool low_mem) {
+int fasta_parser(const string& input_file, const string& output_file, const unsigned int kmer_length, bool per_seq_stats, bool low_mem, size_t stream_buf) {
     GlobalStats stats;
     stats.num_sequences = 0;
     stats.total_length = 0;
     stats.total_gc_count = 0;
 
     if (low_mem)
-        parseFastaFileStream(input_file, output_file, stats, kmer_length, per_seq_stats);
+        parseFastaFileStream(input_file, output_file, stats, kmer_length, per_seq_stats, stream_buf);
     else
         parseFastaFile(input_file, output_file, stats, kmer_length, per_seq_stats);
     if (stats.num_sequences == 0) {

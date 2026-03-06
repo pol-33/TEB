@@ -25,6 +25,7 @@ struct Config {
     unsigned int kmer_length = 0;
     bool per_seq_stats = false;
     bool low_mem = false;
+    size_t stream_buf_bytes = 3UL * 1024UL * 1024UL;  // default 3 MB
 };
 
 void usage() {
@@ -37,8 +38,8 @@ void usage() {
     cout << "\t\t -qmin <int value> Minimum Quality for bases (FASTQ only)\n";
     cout << "\t\t -k <int value>    Kmer length for preprocessing text\n";
     cout << "\t\t -s                Print per-sequence statistics (off by default)\n";
-    cout << "\t\t -m                Low-memory mode: release processed pages via MADV_DONTNEED\n";
-    cout << "\t\t                   Keeps RSS bounded (useful for very large files)\n";
+    cout << "\t\t -m [MB]           Low-memory streaming mode (default 3 MB buffer)\n";
+    cout << "\t\t                   e.g. -m 0.5, -m 3, -m 64  (float MB accepted)\n";
 }
 
 Config parse_args(int argc, char* argv[]) {
@@ -68,6 +69,15 @@ Config parse_args(int argc, char* argv[]) {
             cfg.per_seq_stats = true;
         } else if (arg == "-m") {
             cfg.low_mem = true;
+            // Optional next arg: buffer size in MB (float accepted)
+            if (i + 1 < argc) {
+                char* endptr;
+                double mb = strtod(argv[i + 1], &endptr);
+                if (endptr != argv[i + 1] && *endptr == '\0' && mb > 0.0) {
+                    cfg.stream_buf_bytes = (size_t)(mb * 1024.0 * 1024.0);
+                    ++i;
+                }
+            }
         } else throw runtime_error("[parse_args] Unknown argument: " + arg);
     }
 
@@ -82,8 +92,8 @@ int main(int argc, char* argv[]) {
     try {
         Config cfg = parse_args(argc, argv);
 
-        if (cfg.format == Format::FASTA) fasta_parser(cfg.input, cfg.output, cfg.kmer_length, cfg.per_seq_stats, cfg.low_mem);
-        else if (cfg.format == Format::FASTQ) fastq_parser(cfg.input, cfg.output, cfg.qmin, cfg.per_seq_stats, cfg.low_mem);
+        if (cfg.format == Format::FASTA) fasta_parser(cfg.input, cfg.output, cfg.kmer_length, cfg.per_seq_stats, cfg.low_mem, cfg.stream_buf_bytes);
+        else if (cfg.format == Format::FASTQ) fastq_parser(cfg.input, cfg.output, cfg.qmin, cfg.per_seq_stats, cfg.low_mem, cfg.stream_buf_bytes);
 
     } catch (const exception& e) {
         cerr << "Error: " << e.what() << "\n";

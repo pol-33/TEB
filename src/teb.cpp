@@ -25,7 +25,7 @@ struct Config {
     unsigned int kmer_length = 0;
     bool per_seq_stats = false;
     bool low_mem = false;
-    size_t stream_buf_bytes = 3UL * 1024UL * 1024UL;  // default 3 MB
+    size_t stream_buf_bytes = 0.5UL * 1024UL * 1024UL;  // default 0.5 MB
 };
 
 void usage() {
@@ -38,7 +38,7 @@ void usage() {
     cout << "\t\t -qmin <int value> Minimum Quality for bases (FASTQ only)\n";
     cout << "\t\t -k <int value>    Kmer length for preprocessing text\n";
     cout << "\t\t -s                Print per-sequence statistics (off by default)\n";
-    cout << "\t\t -m [MB]           Low-memory streaming mode (default 3 MB buffer)\n";
+    cout << "\t\t -m [MB]           Low-memory streaming mode (default 0.5 MB buffer)\n";
     cout << "\t\t                   e.g. -m 0.5, -m 3, -m 64  (float MB accepted)\n";
 }
 

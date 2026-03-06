@@ -24,6 +24,7 @@ struct Config {
     int qmin = 0;
     unsigned int kmer_length = 0;
     bool per_seq_stats = false;
+    bool low_mem = false;
 };
 
 void usage() {
@@ -36,6 +37,8 @@ void usage() {
     cout << "\t\t -qmin <int value> Minimum Quality for bases (FASTQ only)\n";
     cout << "\t\t -k <int value>    Kmer length for preprocessing text\n";
     cout << "\t\t -s                Print per-sequence statistics (off by default)\n";
+    cout << "\t\t -m                Low-memory mode: release processed pages via MADV_DONTNEED\n";
+    cout << "\t\t                   Keeps RSS bounded (useful for very large files)\n";
 }
 
 Config parse_args(int argc, char* argv[]) {
@@ -63,6 +66,8 @@ Config parse_args(int argc, char* argv[]) {
             cfg.kmer_length = stoi(argv[++i]);
         } else if (arg == "-s") {
             cfg.per_seq_stats = true;
+        } else if (arg == "-m") {
+            cfg.low_mem = true;
         } else throw runtime_error("[parse_args] Unknown argument: " + arg);
     }
 
@@ -77,8 +82,8 @@ int main(int argc, char* argv[]) {
     try {
         Config cfg = parse_args(argc, argv);
 
-        if (cfg.format == Format::FASTA) fasta_parser(cfg.input, cfg.output, cfg.kmer_length, cfg.per_seq_stats);
-        else if (cfg.format == Format::FASTQ) fastq_parser(cfg.input, cfg.output, cfg.qmin, cfg.per_seq_stats);
+        if (cfg.format == Format::FASTA) fasta_parser(cfg.input, cfg.output, cfg.kmer_length, cfg.per_seq_stats, cfg.low_mem);
+        else if (cfg.format == Format::FASTQ) fastq_parser(cfg.input, cfg.output, cfg.qmin, cfg.per_seq_stats, cfg.low_mem);
 
     } catch (const exception& e) {
         cerr << "Error: " << e.what() << "\n";

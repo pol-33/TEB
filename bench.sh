@@ -44,10 +44,14 @@ FASTA_COMMITS=(
     "8441748:Merge fixes"
     "58cca05:Optimize parsers"
     "b3e0979:mmap + per-seq flag (HEAD)"
+    "f320be9:Low-mem (mmap, default)"
+    "f320be9:Low-mem (-m streaming)::-m"
 )
 FASTQ_COMMITS=(
     "58cca05:Optimize parsers"
     "b3e0979:mmap + per-seq flag (HEAD)"
+    "f320be9:Low-mem (mmap, default)"
+    "f320be9:Low-mem (-m streaming)::-m"
 )
 
 # ── Colours (disabled when stdout is not a terminal) ─────────────────────────
@@ -129,8 +133,16 @@ benchmark_suite() {
         local hash="${entry%%:*}"
         local rest="${entry#*:}"      # "label" or "label:long"
         local label="${rest%%:*}"     # always the label
-        local flags_style=""
-        [[ "$rest" == *:* ]] && flags_style="${rest#*:}"
+        local flags_style="" extra_flags=""
+        if [[ "$rest" == *:* ]]; then
+            local style_and_extra="${rest#*:}"
+            if [[ "$style_and_extra" == *:* ]]; then
+                flags_style="${style_and_extra%%:*}"
+                extra_flags="${style_and_extra#*:}"
+            else
+                flags_style="$style_and_extra"
+            fi
+        fi
 
         # Select short or long CLI flags based on per-entry annotation
         local f_in="-i" f_fmt="-f" f_out="-o"
@@ -162,20 +174,21 @@ benchmark_suite() {
 
         # ── Warm-up run (page-cache priming, not measured) ───────────────────
         printf "  %s  warm-up ...%s\r" "$DIM" "$RST" >&2
-        "$binary" "$f_in" "$inp" "$f_fmt" "$fmt" "$f_out" "$out_path" > /dev/null 2>&1 || true
+        "$binary" "$f_in" "$inp" "$f_fmt" "$fmt" $extra_flags "$f_out" "$out_path" > /dev/null 2>&1 || true
 
         # ── Timed runs ───────────────────────────────────────────────────────
         local sum_real=0 sum_cpu=0 sum_instr=0 sum_cycles=0 sum_pf=0
-        local min_real=9999999 last_rss=0
+        local min_real=9999999 max_rss=0
 
         for ((r = 1; r <= nruns; r++)); do
             printf "  %s  run %d / %d  ...%s\r" "$DIM" "$r" "$nruns" "$RST" >&2
 
             local real user sys instr cycles rss pf
             read -r real user sys instr cycles rss pf < <(
-                single_run "$out_path" "$f_out" "$binary" "$f_in" "$inp" "$f_fmt" "$fmt"
+                single_run "$out_path" "$f_out" "$binary" "$f_in" "$inp" "$f_fmt" "$fmt" $extra_flags
             ) || true
 
+            max_rss=$(awk "BEGIN{ print ($rss > $max_rss) ? $rss : $max_rss }")
             local cpu; cpu=$(awk "BEGIN{printf \"%.6f\", $user + $sys}")
             min_real=$(awk "BEGIN{ print ($real < $min_real) ? $real : $min_real }")
             sum_real=$(awk   "BEGIN{printf \"%.6f\", $sum_real  + $real  }")
@@ -183,7 +196,6 @@ benchmark_suite() {
             sum_instr=$(awk  "BEGIN{printf \"%.0f\", $sum_instr + $instr }")
             sum_cycles=$(awk "BEGIN{printf \"%.0f\", $sum_cycles+ $cycles}")
             sum_pf=$(awk     "BEGIN{printf \"%.0f\", $sum_pf    + $pf    }")
-            last_rss=$rss
         done
 
         printf "%-60s\r" "" >&2  # erase progress line
@@ -194,7 +206,7 @@ benchmark_suite() {
         avg_cpu=$(awk   "BEGIN{printf \"%.3f\", $sum_cpu   / $nruns      }")
         m_instr=$(awk   "BEGIN{printf \"%.1f\", $sum_instr / $nruns / 1e6}")
         m_cycles=$(awk  "BEGIN{printf \"%.1f\", $sum_cycles/ $nruns / 1e6}")
-        rss_mb=$(awk    "BEGIN{printf \"%.1f\", $last_rss  / 1048576     }")
+        rss_mb=$(awk    "BEGIN{printf \"%.1f\", $max_rss   / 1048576     }")
         ipc=$(awk       "BEGIN{c=$sum_cycles; printf \"%.2f\", (c>0) ? $sum_instr/c : 0}")
         avg_pf=$(awk    "BEGIN{printf \"%.0f\", $sum_pf    / $nruns      }")
 
@@ -248,9 +260,9 @@ printf "%s            (instructions retired & cycles elapsed come from the PMU)%
 printf "%s══════════════════════════════════════════════════════════════════%s\n\n" \
     "$BOLD" "$RST"
 
-printf "%s  FASTA: 5 commits × %d run(s) + 1 warm-up%s\n" "$DIM" "$FASTA_RUNS" "$RST"
-printf "%s  FASTQ: 2 commits × %d run(s) + 1 warm-up  (pre-mmap run ≈ 247 s)%s\n\n" \
-    "$DIM" "$FASTQ_RUNS" "$RST"
+printf "%s  FASTA: %d commits × %d run(s) + 1 warm-up%s\n" "$DIM" "${#FASTA_COMMITS[@]}" "$FASTA_RUNS" "$RST"
+printf "%s  FASTQ: %d commits × %d run(s) + 1 warm-up  (pre-mmap run ≈ 247 s)%s\n\n" \
+    "$DIM" "${#FASTQ_COMMITS[@]}" "$FASTQ_RUNS" "$RST"
 
 benchmark_suite "fasta" "$FASTA_RUNS" "$FASTA_OUT" FASTA_COMMITS
 benchmark_suite "fastq" "$FASTQ_RUNS" "$FASTQ_OUT" FASTQ_COMMITS

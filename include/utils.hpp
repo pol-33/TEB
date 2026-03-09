@@ -12,21 +12,17 @@ using namespace std;
 #define CACHE_BLOCK_SIZE 0
 #define NUMBER_CORES 0
 #define IO_BUFFER_SIZE (1 << 20)
-// Size of each slab released to the OS via MADV_DONTNEED in low-memory mode.
-// Must be a multiple of the page size (4 KB); 4 MB is a good trade-off between
-// syscall overhead and RSS granularity.
-#define MADV_DONTNEED_CHUNK (4UL * 1024UL * 1024UL)
 
 typedef unordered_map<string,vector<int>> kmer_table_t;
 
-static inline void update_kmer_table(const string& text, kmer_table_t& text_kmer_table, const unsigned int kmer_length) {
-    if (text.length() < kmer_length) return;
-
-    string kmer(text, 0, kmer_length);
+// Raw-pointer overload: works directly on a mapped/read buffer without
+// constructing a temporary std::string, saving one heap allocation per line.
+static inline void update_kmer_table(const char* text, size_t text_len, kmer_table_t& text_kmer_table, const unsigned int kmer_length) {
+    if (text_len < kmer_length) return;
+    string kmer(text, kmer_length);
     text_kmer_table[kmer].push_back(0);
-
-    for (size_t i = 1; i <= text.length() - kmer_length; ++i) {
-        kmer.assign(text, i, kmer_length);
+    for (size_t i = 1; i <= text_len - kmer_length; ++i) {
+        kmer.assign(text + i, kmer_length);
         text_kmer_table[kmer].push_back(i);
     }
 }

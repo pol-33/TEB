@@ -48,6 +48,7 @@ FASTA_COMMITS=(
     "d37b251:-m 3 MB::-m 3"
     "d37b251:-m 0.5 MB::-m 0.5"
     "d37b251:-m 0.1 MB::-m 0.1"
+    "267f4ba: Better streaming mode"
 )
 FASTQ_COMMITS=(
     "58cca05:Optimize parsers"
@@ -56,6 +57,7 @@ FASTQ_COMMITS=(
     "d37b251:-m 3 MB::-m 3"
     "d37b251:-m 0.5 MB::-m 0.5"
     "d37b251:-m 0.1 MB::-m 0.1"
+    "267f4ba: Better streaming mode"
 )
 
 # ── Colours (disabled when stdout is not a terminal) ─────────────────────────

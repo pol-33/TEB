@@ -27,8 +27,8 @@ set -uo pipefail
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-FASTA_IN="$REPO/datasets/chr1.fna"
-FASTQ_IN="$REPO/datasets/SRR22320000_1.fastq"
+FASTA_IN="$REPO/datasets/GRCh38.fna"
+FASTQ_IN="$REPO/datasets/reads_1M.fastq"
 FASTA_OUT="/tmp/teb_bench_out.fna"
 FASTQ_OUT="/tmp/teb_bench_out.fastq"
 

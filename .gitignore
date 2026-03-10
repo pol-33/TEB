@@ -3,6 +3,7 @@
 *.exe
 
 # Sequence files
+*.fa
 *.fna
 *.fastq
 *.fna.gz

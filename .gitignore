@@ -2,9 +2,16 @@
 *.o
 *.exe
 
+# Compiled binaries
+indexer
+mapper
+
 # Sequence files
 *.fa
 *.fna
 *.fastq
 *.fna.gz
 *.fastq.gz
+
+*.idx
+*.sam

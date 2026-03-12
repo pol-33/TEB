@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <fstream>
 #include <string>
 
 class SamWriter {
@@ -9,4 +10,6 @@ public:
     void write_header(const std::string& ref_name, uint32_t ref_len);
     void write_alignment(const std::string& read_name, uint32_t pos,
                          const std::string& seq, int mismatches, bool mapped);
+private:
+    std::ofstream out_;
 };

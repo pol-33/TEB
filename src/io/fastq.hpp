@@ -1,5 +1,6 @@
 #pragma once
 
+#include <fstream>
 #include <string>
 
 struct Read {
@@ -12,4 +13,6 @@ class FastqReader {
 public:
     explicit FastqReader(const std::string& path);
     bool next(Read& r);
+private:
+    std::ifstream in_;
 };

@@ -22,6 +22,9 @@ public:
                      const uint8_t* read_packed,
                      uint32_t read_len) const;
 
+    uint32_t genome_size() const noexcept { return genome_size_; }
+    size_t   k_val()       const noexcept { return k_; }
+
 private:
     size_t k_;
     ankerl::unordered_dense::map<uint64_t, std::vector<uint32_t>> table_;

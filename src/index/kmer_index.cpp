@@ -1,7 +1,7 @@
 #include "kmer_index.hpp"
 #include <stdexcept>
 
-KmerIndex::KmerIndex(size_t k) : k_(k) {}
+KmerIndex::KmerIndex(size_t k) : k_(k), table_() {}
 
 void KmerIndex::build(const std::string&) {
     throw std::runtime_error("not implemented");

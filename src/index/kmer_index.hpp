@@ -1,8 +1,10 @@
 #pragma once
 
 #include "index.hpp"
+#include "unordered_dense.h"
 #include <cstddef>
 #include <cstdint>
+#include <vector>
 
 class KmerIndex : public GenomeIndex {
 public:
@@ -20,4 +22,5 @@ public:
 
 private:
     [[maybe_unused]] size_t k_;
+    ankerl::unordered_dense::map<uint64_t, std::vector<uint32_t>> table_;
 };

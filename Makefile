@@ -11,7 +11,7 @@
 
 CXX        = g++
 CXXFLAGS   = -Wall -Wextra -std=c++17 -O3 -march=native \
-             -I src/index -I src/genome -I src/io -I src/util
+             -I src/index -I src/genome -I src/io -I src/util -I vendor
 DEBUGFLAGS = -DDEBUG -g
 
 # ---------- build directory ------------------------------------------------ #

@@ -10,16 +10,24 @@
 # ===========================================================================
 
 CXX        = g++
-CXXFLAGS   = -Wall -Wextra -std=c++17 -O3 -march=native -I include/
+CXXFLAGS   = -Wall -Wextra -std=c++17 -O3 -march=native \
+             -I src/index -I src/genome -I src/io -I src/util
 DEBUGFLAGS = -DDEBUG -g
 
 # ---------- build directory ------------------------------------------------ #
 BUILDDIR = build
 
 # ---------- shared core library objects ------------------------------------ #
-# Parsers, utils, and index — linked into both indexer and mapper.
-CORE_SRC = src/fasta_parser.cpp src/fastq_parser.cpp src/utils.cpp src/index.cpp
-CORE_OBJ = $(CORE_SRC:src/%.cpp=$(BUILDDIR)/%.o)
+# Index, genome, and I/O layers — linked into both indexer and mapper.
+CORE_SRC = src/index/index.cpp \
+           src/index/kmer_index.cpp \
+           src/genome/genome.cpp \
+           src/io/fasta.cpp \
+           src/io/fastq.cpp \
+           src/io/sam.cpp
+
+# Map each src/subdir/file.cpp → build/subdir/file.o
+CORE_OBJ = $(patsubst src/%.cpp,$(BUILDDIR)/%.o,$(CORE_SRC))
 
 # ---------- per-target sources --------------------------------------------- #
 INDEXER_SRC = src/indexer.cpp
@@ -64,9 +72,11 @@ $(TEB): $(CORE_OBJ) $(TEB_OBJ)
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
 # ---------- generic compilation rule --------------------------------------- #
-# All .o files go into $(BUILDDIR)/ regardless of src/ origin.
+# Handles both src/file.cpp → build/file.o
+# and      src/subdir/file.cpp → build/subdir/file.o
 
-$(BUILDDIR)/%.o: src/%.cpp | $(BUILDDIR)
+$(BUILDDIR)/%.o: src/%.cpp
+	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 # Create build directory if missing

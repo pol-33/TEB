@@ -63,7 +63,7 @@ KmerIndex::~KmerIndex() {
 }
 
 // ---------------------------------------------------------------------------
-// build()
+// build()  —  two-pass CSR build
 //
 // Binary k-mer encoding mirrors GenomeStorage: A=0, C=1, G=2, T=3.
 // The running key is maintained as:
@@ -72,10 +72,14 @@ KmerIndex::~KmerIndex() {
 // top after applying kmer_mask):
 //   new_key = ((key << 2) | new_base_bits) & kmer_mask
 // ---------------------------------------------------------------------------
+// max_freq_ filter discards highly repetitive k-mers
 void KmerIndex::build(const std::string& fasta_path) {
-    const std::string seq = read_fasta_sequence(fasta_path);
+    // Parse → encode → free the raw string before any table work.
+    {
+        std::string seq = read_fasta_sequence(fasta_path);
+        genome_.encode(std::move(seq));
+    }
 
-    genome_.encode(seq);
     packed_ptr_  = genome_.packed_data();
     nmask_ptr_   = genome_.n_mask_data();
     genome_size_ = genome_.size();
@@ -87,43 +91,138 @@ void KmerIndex::build(const std::string& fasta_path) {
         return;
     }
 
-    table_.clear();
-
     const uint64_t kmer_mask = (k_ < 32)
         ? ((uint64_t{1} << (2 * k_)) - 1)
         : ~uint64_t{0};
+    const uint32_t last_start = len - static_cast<uint32_t>(k_);
+    constexpr uint32_t REPORT_STEP = 100'000'000u;
 
-    // Count Ns in the initial window [0, k).
-    uint32_t n_count = 0;
-    for (uint32_t i = 0; i < static_cast<uint32_t>(k_); ++i)
-        if (genome_.is_n(i)) ++n_count;
+    const uint8_t*  pk = packed_ptr_;
+    const uint64_t* nm = nmask_ptr_;
+    auto packed_base = [pk](uint32_t pos) noexcept -> uint8_t {
+        return (pk[pos / 4] >> ((pos % 4) * 2)) & 3u;
+    };
+    auto is_n_fast = [nm](uint32_t pos) noexcept -> bool {
+        return (nm[pos / 64] >> (pos % 64)) & uint64_t{1};
+    };
 
-    // Build key for the first window.
-    uint64_t key = 0;
-    for (uint32_t i = 0; i < static_cast<uint32_t>(k_); ++i) {
-        const uint8_t b = BASE_ENC.v[static_cast<uint8_t>(seq[i])];
-        key = ((key << 2) | (b & 3u)) & kmer_mask;
+    // =========================================================================
+    // Phase 1: count occurrences of each k-mer.
+    // =========================================================================
+    std::cerr << "[kmer_index] Phase 1/2: counting k-mers...\n";
+
+    ankerl::unordered_dense::map<uint64_t, uint32_t> count_map;
+    {
+        uint32_t n_count = 0;
+        for (uint32_t i = 0; i < static_cast<uint32_t>(k_); ++i)
+            if (is_n_fast(i)) ++n_count;
+
+        uint64_t key = 0;
+        for (uint32_t i = 0; i < static_cast<uint32_t>(k_); ++i)
+            key = ((key << 2) | packed_base(i)) & kmer_mask;
+
+        if (n_count == 0) ++count_map[key];
+
+        uint32_t next_report = REPORT_STEP;
+        for (uint32_t i = 1; i <= last_start; ++i) {
+            if (is_n_fast(i - 1))                             --n_count;
+            if (is_n_fast(i + static_cast<uint32_t>(k_) - 1)) ++n_count;
+            key = ((key << 2) | packed_base(i + static_cast<uint32_t>(k_) - 1))
+                  & kmer_mask;
+            if (n_count == 0) ++count_map[key];
+
+            if (i >= next_report) {
+                std::cerr << "[kmer_index] phase 1: " << (i / 1'000'000u)
+                          << " / " << (len / 1'000'000u)
+                          << " Mbp  distinct=" << count_map.size() << "\n";
+                next_report += REPORT_STEP;
+            }
+        }
+    }
+    std::cerr << "[kmer_index] Phase 1 done. distinct_kmers="
+              << count_map.size() << "\n";
+
+    // =========================================================================
+    // Transition: compute offsets, build table_, free count_map, alloc flat_.
+    // =========================================================================
+    uint64_t total_positions = 0;
+    uint64_t filtered_kmers  = 0;
+    for (const auto& [k, c] : count_map) {
+        if (max_freq_ > 0 && c > max_freq_) { ++filtered_kmers; continue; }
+        total_positions += c;
+    }
+    if (filtered_kmers > 0)
+        std::cerr << "[kmer_index] Filtered " << filtered_kmers
+                  << " k-mers with >" << max_freq_ << " occurrences\n";
+
+    std::cerr << "[kmer_index] Building CSR structure ("
+              << (total_positions * sizeof(uint32_t) / (1024ULL * 1024)) << " MB flat)...\n";
+
+    table_.clear();
+    table_.reserve(count_map.size() - filtered_kmers);
+    {
+        uint64_t offset = 0;
+        for (const auto& [k, c] : count_map) {
+            if (max_freq_ > 0 && c > max_freq_) continue;
+            // second starts at 0 and acts as fill cursor in phase 2.
+            table_.emplace(k, std::make_pair(static_cast<uint32_t>(offset),
+                                             uint32_t{0}));
+            offset += c;
+        }
     }
 
-    if (n_count == 0)
-        table_[key].push_back(uint32_t{0});
+    // Free count_map before allocating flat_ (its memory is now free).
+    { ankerl::unordered_dense::map<uint64_t, uint32_t> tmp; count_map.swap(tmp); }
 
-    const uint32_t last_start = len - static_cast<uint32_t>(k_);
-    for (uint32_t i = 1; i <= last_start; ++i) {
-        // Slide: remove base (i-1), add base (i + k - 1).
-        if (genome_.is_n(i - 1))                  --n_count;
-        if (genome_.is_n(i + static_cast<uint32_t>(k_) - 1)) ++n_count;
+    flat_.clear();
+    flat_.resize(static_cast<size_t>(total_positions));
 
-        const uint8_t b_new =
-            BASE_ENC.v[static_cast<uint8_t>(seq[i + k_ - 1])];
-        key = ((key << 2) | (b_new & 3u)) & kmer_mask;
+    // =========================================================================
+    // Phase 2: re-scan packed genome and fill flat_ positions.
+    // For each valid k-mer at position i:
+    //   flat_[start + cursor] = i;  ++cursor;
+    // After the scan, cursor == count for every entry.
+    // =========================================================================
+    std::cerr << "[kmer_index] Phase 2/2: filling position array...\n";
+    {
+        uint32_t n_count = 0;
+        for (uint32_t i = 0; i < static_cast<uint32_t>(k_); ++i)
+            if (is_n_fast(i)) ++n_count;
 
-        if (n_count == 0)
-            table_[key].push_back(i);
+        uint64_t key = 0;
+        for (uint32_t i = 0; i < static_cast<uint32_t>(k_); ++i)
+            key = ((key << 2) | packed_base(i)) & kmer_mask;
+
+        if (n_count == 0) {
+            auto it = table_.find(key);
+            if (it != table_.end())
+                flat_[it->second.first + it->second.second++] = 0;
+        }
+
+        uint32_t next_report = REPORT_STEP;
+        for (uint32_t i = 1; i <= last_start; ++i) {
+            if (is_n_fast(i - 1))                             --n_count;
+            if (is_n_fast(i + static_cast<uint32_t>(k_) - 1)) ++n_count;
+            key = ((key << 2) | packed_base(i + static_cast<uint32_t>(k_) - 1))
+                  & kmer_mask;
+
+            if (n_count == 0) {
+                auto it = table_.find(key);
+                if (it != table_.end())
+                    flat_[it->second.first + it->second.second++] = i;
+            }
+
+            if (i >= next_report) {
+                std::cerr << "[kmer_index] phase 2: " << (i / 1'000'000u)
+                          << " / " << (len / 1'000'000u) << " Mbp\n";
+                next_report += REPORT_STEP;
+            }
+        }
     }
 
     std::cerr << "[kmer_index] k=" << k_
               << "  distinct_kmers=" << table_.size()
+              << "  total_positions=" << flat_.size()
               << "  genome_size=" << len << "\n";
 }
 
@@ -194,22 +293,20 @@ void KmerIndex::save(const std::string& idx_path) const {
     out.write(reinterpret_cast<const char*>(&n_entries), 8);
 
     // Bucket array (20 bytes each: key[8] n_pos[4] ovfl_off[8]).
-    // Compute overflow byte offsets on the fly.
-    uint64_t running_bytes = 0;
-    for (const auto& [k, positions] : table_) {
-        const uint32_t n_pos     = static_cast<uint32_t>(positions.size());
-        const uint64_t ovfl_off  = running_bytes;
+    // The CSR layout stores table_[key] = {start_in_flat, count}.
+    // ovfl_off = start * sizeof(uint32_t) (byte offset into flat_ array).
+    for (const auto& [k, sc] : table_) {
+        const uint32_t n_pos    = sc.second;
+        const uint64_t ovfl_off = static_cast<uint64_t>(sc.first) * sizeof(uint32_t);
         out.write(reinterpret_cast<const char*>(&k),       8);
         out.write(reinterpret_cast<const char*>(&n_pos),   4);
         out.write(reinterpret_cast<const char*>(&ovfl_off),8);
-        running_bytes += n_pos * sizeof(uint32_t);
     }
 
-    // Overflow array
-    for (const auto& [k, positions] : table_) {
-        out.write(reinterpret_cast<const char*>(positions.data()),
-                  static_cast<std::streamsize>(positions.size() * sizeof(uint32_t)));
-    }
+    // Overflow (position) array — single contiguous write.
+    if (!flat_.empty())
+        out.write(reinterpret_cast<const char*>(flat_.data()),
+                  static_cast<std::streamsize>(flat_.size() * sizeof(uint32_t)));
 
     if (!out) throw std::runtime_error("KmerIndex::save: write error");
 }
@@ -305,25 +402,26 @@ void KmerIndex::load(const std::string& idx_path, LoadMode mode) {
     // n_entries.
     const uint64_t n_entries = load_le64(p + off); off += 8;
 
-    // Bucket array starts at `off`; overflow array follows immediately.
+    // Bucket array starts at `off`; flat position array follows immediately.
     const uint8_t* buckets  = p + off;
     constexpr uint64_t BUCKET_STRIDE = 20; // key(8) + n_pos(4) + ovfl_off(8)
     const uint8_t* overflow = buckets + n_entries * BUCKET_STRIDE;
 
-    // Rebuild the hash table.
+    // Reconstruct the flat_ array (single memcpy from mmap region).
+    const size_t ovfl_bytes = file_size - static_cast<size_t>(overflow - p);
+    flat_.resize(ovfl_bytes / sizeof(uint32_t));
+    if (!flat_.empty())
+        std::memcpy(flat_.data(), overflow, ovfl_bytes);
+
+    // Rebuild the hash table: table_[key] = {start_in_flat, count}.
     table_.reserve(n_entries);
     for (uint64_t i = 0; i < n_entries; ++i) {
         const uint8_t* be  = buckets + i * BUCKET_STRIDE;
         const uint64_t key      = load_le64(be);
         const uint32_t n_pos    = load_le32(be + 8);
         const uint64_t ovfl_off = load_le64(be + 12);
-
-        std::vector<uint32_t> positions(n_pos);
-        if (n_pos > 0)
-            std::memcpy(positions.data(),
-                        overflow + ovfl_off,
-                        n_pos * sizeof(uint32_t));
-        table_.emplace(key, std::move(positions));
+        const uint32_t start    = static_cast<uint32_t>(ovfl_off / sizeof(uint32_t));
+        table_.emplace(key, std::make_pair(start, n_pos));
     }
 }
 
@@ -346,7 +444,10 @@ std::vector<uint32_t> KmerIndex::query(const std::string& pattern) const {
 
     const auto it = table_.find(key);
     if (it == table_.end()) return {};
-    return it->second;
+    const auto [start, cnt] = it->second;
+    if (cnt == 0) return {};
+    return std::vector<uint32_t>(flat_.begin() + start,
+                                 flat_.begin() + start + cnt);
 }
 
 // ---------------------------------------------------------------------------

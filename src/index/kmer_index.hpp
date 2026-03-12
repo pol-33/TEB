@@ -24,10 +24,17 @@ public:
 
     uint32_t genome_size() const noexcept { return genome_size_; }
     size_t   k_val()       const noexcept { return k_; }
+    // Skip k-mers with more than max_freq positions (0 = unlimited).
+    void     set_max_freq(uint32_t mf) noexcept { max_freq_ = mf; }
 
 private:
-    size_t k_;
-    ankerl::unordered_dense::map<uint64_t, std::vector<uint32_t>> table_;
+    size_t   k_;
+    uint32_t max_freq_ = 0;
+
+    // CSR layout: table_[key] = {start_in_flat, count}.
+    // flat_ holds all position lists concatenated.
+    ankerl::unordered_dense::map<uint64_t, std::pair<uint32_t, uint32_t>> table_;
+    std::vector<uint32_t> flat_;
 
     // Genome storage (owns data in build mode; empty in load mode).
     GenomeStorage genome_;

@@ -7,6 +7,7 @@
 // memory-optimised internal representations (2-bit packing, sampled SA, etc.).
 
 #include "index.hpp"
+#include "kmer_index.hpp"
 
 #include <cstdlib>
 #include <cstring>
@@ -21,6 +22,7 @@ struct IndexerConfig {
     std::string idx_path;                // -I <genome.idx>
     IndexAlgo   algorithm = IndexAlgo::FM;   // --algorithm (default: fm)
     OptimizeMode mode = OptimizeMode::SPEED; // --optimize-memory flips to MEMORY
+    uint32_t    max_freq  = 0;               // --max-freq N (0 = disabled)
 };
 
 // ---- usage / help -------------------------------------------------------- //
@@ -36,6 +38,7 @@ static void print_usage(const char* prog) {
         << "Options:\n"
         << "  --algorithm <kmer|sa|fm>   Indexing algorithm (default: fm)\n"
         << "  --optimize-memory         Optimise for memory instead of speed\n"
+        << "  --max-freq <N>            Skip k-mers with >N occurrences (kmer only)\n"
         << "  -h, --help                Show this help message\n";
 }
 
@@ -44,7 +47,8 @@ static void print_usage(const char* prog) {
 // Long-option IDs that don't clash with short-option chars.
 enum LongOpt : int {
     OPT_ALGORITHM = 256,
-    OPT_OPTMEM     = 257
+    OPT_OPTMEM    = 257,
+    OPT_MAXFREQ   = 258
 };
 
 static IndexerConfig parse_args(int argc, char* argv[]) {
@@ -57,6 +61,7 @@ static IndexerConfig parse_args(int argc, char* argv[]) {
     static struct option long_opts[] = {
         {"algorithm",       required_argument, nullptr, OPT_ALGORITHM},
         {"optimize-memory", no_argument,       nullptr, OPT_OPTMEM},
+        {"max-freq",        required_argument, nullptr, OPT_MAXFREQ},
         {"help",            no_argument,       nullptr, 'h'},
         {nullptr,           0,                 nullptr, 0}
     };
@@ -83,6 +88,15 @@ static IndexerConfig parse_args(int argc, char* argv[]) {
             case OPT_OPTMEM:
                 cfg.mode = OptimizeMode::MEMORY;
                 break;
+            case OPT_MAXFREQ: {
+                const long v = std::strtol(optarg, nullptr, 10);
+                if (v <= 0) {
+                    std::cerr << "Error: --max-freq must be a positive integer.\n";
+                    std::exit(EXIT_FAILURE);
+                }
+                cfg.max_freq = static_cast<uint32_t>(v);
+                break;
+            }
             case 'h':
                 print_usage(argv[0]);
                 std::exit(EXIT_SUCCESS);
@@ -129,6 +143,14 @@ int main(int argc, char* argv[]) {
 
     // Create the appropriate index backend via the index factory.
     auto index = GenomeIndex::create(cfg.algorithm, cfg.mode);
+
+    // Apply max-freq filter before building (kmer index only).
+    if (cfg.max_freq > 0) {
+        if (auto* ki = dynamic_cast<KmerIndex*>(index.get()))
+            ki->set_max_freq(cfg.max_freq);
+        else
+            std::cerr << "[indexer] Warning: --max-freq ignored for non-kmer algorithm.\n";
+    }
 
     // Build the index from the FASTA reference.
     std::cerr << "[indexer] Building index...\n";

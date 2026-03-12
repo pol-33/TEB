@@ -12,6 +12,8 @@
 CXX        = g++
 CXXFLAGS   = -Wall -Wextra -std=c++17 -O3 -march=native \
              -I src/index -I src/genome -I src/io -I src/util -I vendor
+TEB_CXXFLAGS = -Wall -Wextra -std=c++17 -O3 -march=native \
+               -I parser/include -I vendor
 DEBUGFLAGS = -DDEBUG -g
 
 # ---------- build directory ------------------------------------------------ #
@@ -39,8 +41,12 @@ INDEXER = $(BUILDDIR)/indexer
 MAPPER  = $(BUILDDIR)/mapper
 
 # Legacy single binary (parsers-only tool)
-TEB_SRC = src/teb.cpp
-TEB_OBJ = $(BUILDDIR)/teb.o
+TEB_SRC = parser/fasta_parser.cpp \
+          parser/fastq_parser.cpp \
+          parser/index.cpp \
+          parser/utils.cpp \
+          parser/teb.cpp
+TEB_OBJ = $(patsubst parser/%.cpp,$(BUILDDIR)/parser/%.o,$(TEB_SRC))
 TEB     = teb.exe
 
 # ===========================================================================
@@ -68,8 +74,8 @@ $(INDEXER): $(CORE_OBJ) $(INDEXER_OBJ)
 $(MAPPER): $(CORE_OBJ) $(MAPPER_OBJ)
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
-$(TEB): $(CORE_OBJ) $(TEB_OBJ)
-	$(CXX) $(CXXFLAGS) -o $@ $^
+$(TEB): $(TEB_OBJ)
+	$(CXX) $(TEB_CXXFLAGS) -o $@ $^
 
 # ---------- generic compilation rule --------------------------------------- #
 # Handles both src/file.cpp → build/file.o
@@ -78,6 +84,10 @@ $(TEB): $(CORE_OBJ) $(TEB_OBJ)
 $(BUILDDIR)/%.o: src/%.cpp
 	@mkdir -p $(dir $@)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
+
+$(BUILDDIR)/parser/%.o: parser/%.cpp
+	@mkdir -p $(dir $@)
+	$(CXX) $(TEB_CXXFLAGS) -c $< -o $@
 
 # Create build directory if missing
 $(BUILDDIR):

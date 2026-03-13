@@ -21,36 +21,30 @@ void SamWriter::write_header(const std::string& ref_name, uint32_t ref_len) {
 }
 
 void SamWriter::write_alignment(const std::string& read_name,
+                                const std::string& chrom,
                                 uint32_t           pos,
+                                const std::string& cigar,
                                 const std::string& seq,
-                                int                mismatches,
-                                bool               mapped) {
-    // FLAG
-    const int flag = mapped ? 0 : 4;
+                                const std::string& qual,
+                                const std::string& alt_chrom,
+                                uint32_t           alt_pos,
+                                const std::string& alt_cigar) {
+    // Simplified alignment line format:
+    // read_name chrom pos cigar seq qual [ALT:chrom,pos,cigar]
+    out_ << read_name << '\t'
+         << chrom << '\t'
+         << pos << '\t'
+         << cigar << '\t'
+         << seq << '\t'
+         << qual;
 
-    // Reference name and 1-based position
-    const std::string rname = mapped ? "*" : "*";   // refined below
-    const uint32_t    sam_pos = mapped ? pos + 1 : 0;
-    const int         mapq    = mapped ? 60 : 0;
-    const std::string cigar   = mapped
-        ? std::to_string(seq.size()) + "M"
-        : "*";
-    const std::string nm_tag  = mapped
-        ? "NM:i:" + std::to_string(mismatches)
-        : "NM:i:0";
+    if (!alt_chrom.empty() && alt_pos > 0 && !alt_cigar.empty()) {
+        out_ << '\t'
+             << "ALT:" << alt_chrom
+             << ',' << alt_pos
+             << ',' << alt_cigar;
+    }
+    out_ << '\n';
 
-    // SAM columns: QNAME FLAG RNAME POS MAPQ CIGAR RNEXT PNEXT TLEN SEQ QUAL TAGS
-    out_ << read_name      << '\t'   // QNAME
-         << flag           << '\t'   // FLAG
-         << "ref"          << '\t'   // RNAME  (single-ref index, always "ref")
-         << sam_pos        << '\t'   // POS (1-based; 0 = unmapped)
-         << mapq           << '\t'   // MAPQ
-         << cigar          << '\t'   // CIGAR
-         << "*"            << '\t'   // RNEXT
-         << '0'            << '\t'   // PNEXT
-         << '0'            << '\t'   // TLEN
-         << seq            << '\t'   // SEQ
-         << "*"            << '\t'   // QUAL
-         << nm_tag         << '\n';  // optional NM tag
     if (!out_) throw std::runtime_error("SamWriter::write_alignment: write failed");
 }

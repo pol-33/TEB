@@ -5,6 +5,7 @@
 #include "unordered_dense.h"
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 class KmerIndex : public GenomeIndex {
@@ -24,6 +25,8 @@ public:
 
     uint32_t genome_size() const noexcept { return genome_size_; }
     size_t   k_val()       const noexcept { return k_; }
+    std::string chrom_name() const { return chrom_name_; }
+    std::string genome_substr(uint32_t pos, uint32_t len) const;
     // Skip k-mers with more than max_freq positions (0 = unlimited).
     void     set_max_freq(uint32_t mf) noexcept { max_freq_ = mf; }
 
@@ -45,6 +48,7 @@ private:
     const uint8_t*  packed_ptr_  = nullptr;
     const uint64_t* nmask_ptr_   = nullptr;
     uint32_t        genome_size_ = 0;
+    std::string     chrom_name_;
 
     // mmap tracking (non-zero only after load()).
     void*  mmap_ptr_  = nullptr;

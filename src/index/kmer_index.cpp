@@ -42,6 +42,9 @@ static constexpr auto BASE_ENC = make_base_enc();
 static inline uint32_t load_le32(const uint8_t* p) noexcept {
     uint32_t v; std::memcpy(&v, p, 4); return v;
 }
+static inline uint16_t load_le16(const uint8_t* p) noexcept {
+    uint16_t v; std::memcpy(&v, p, 2); return v;
+}
 static inline uint64_t load_le64(const uint8_t* p) noexcept {
     uint64_t v; std::memcpy(&v, p, 8); return v;
 }
@@ -74,6 +77,8 @@ KmerIndex::~KmerIndex() {
 // ---------------------------------------------------------------------------
 // max_freq_ filter discards highly repetitive k-mers
 void KmerIndex::build(const std::string& fasta_path) {
+    chrom_name_ = read_fasta_chrom_name(fasta_path);
+
     // Parse → encode → free the raw string before any table work.
     {
         std::string seq = read_fasta_sequence(fasta_path);
@@ -249,11 +254,16 @@ void KmerIndex::save(const std::string& idx_path) const {
     if (!packed_ptr_ || !nmask_ptr_)
         throw std::runtime_error("KmerIndex::save: index not built or loaded");
 
+    const uint16_t chrom_len = static_cast<uint16_t>(chrom_name_.size());
+    if (chrom_name_.size() > 65535u)
+        throw std::runtime_error("KmerIndex::save: chrom name too long");
+
     const uint64_t gen_len      = genome_size_;
     const uint64_t packed_bytes = (gen_len + 3) / 4;
     const uint64_t nmask_bytes  = ((gen_len + 63) / 64) * 8;
-    const uint64_t nmask_offset = ((18 + packed_bytes) + 7) & ~uint64_t{7};
-    const uint64_t pad_bytes    = nmask_offset - (18 + packed_bytes);
+    const uint64_t header_bytes = 8 + 1 + 1 + 2 + chrom_len + 8;
+    const uint64_t nmask_offset = ((header_bytes + packed_bytes) + 7) & ~uint64_t{7};
+    const uint64_t pad_bytes    = nmask_offset - (header_bytes + packed_bytes);
     const uint64_t n_entries    = static_cast<uint64_t>(table_.size());
 
     std::ofstream out(idx_path, std::ios::binary);
@@ -267,6 +277,11 @@ void KmerIndex::save(const std::string& idx_path) const {
     const uint8_t reserved  = 0;
     out.write(reinterpret_cast<const char*>(&algo_byte), 1);
     out.write(reinterpret_cast<const char*>(&reserved),  1);
+
+    // Chromosome name metadata.
+    out.write(reinterpret_cast<const char*>(&chrom_len), 2);
+    if (chrom_len > 0)
+        out.write(chrom_name_.data(), chrom_len);
 
     // genome_len
     out.write(reinterpret_cast<const char*>(&gen_len), 8);
@@ -343,7 +358,7 @@ void KmerIndex::load(const std::string& idx_path, LoadMode mode) {
                                  + std::string(strerror(errno)));
     }
     const size_t file_size = static_cast<size_t>(st.st_size);
-    if (file_size < 18)  {
+    if (file_size < 20)  {
         close(fd);
         throw std::runtime_error("KmerIndex::load: file too small");
     }
@@ -383,16 +398,25 @@ void KmerIndex::load(const std::string& idx_path, LoadMode mode) {
         throw std::runtime_error("KmerIndex::load: wrong algo byte — expected KMER");
     ++off; // skip reserved
 
+    // Chromosome metadata.
+    const uint16_t chrom_len = load_le16(p + off);
+    off += 2;
+    if (off + chrom_len + 8 > file_size)
+        throw std::runtime_error("KmerIndex::load: truncated chrom/genome header");
+    chrom_name_.assign(reinterpret_cast<const char*>(p + off), chrom_len);
+    off += chrom_len;
+
     // Genome length.
     const uint64_t gen_len = load_le64(p + off); off += 8;
     genome_size_ = static_cast<uint32_t>(gen_len);
 
+    const uint64_t packed_offset = off;
     const uint64_t packed_bytes = (gen_len + 3) / 4;
-    const uint64_t nmask_offset = ((18 + packed_bytes) + 7) & ~uint64_t{7};
+    const uint64_t nmask_offset = ((packed_offset + packed_bytes) + 7) & ~uint64_t{7};
     const uint64_t nmask_bytes  = ((gen_len + 63) / 64) * 8;
 
     // Zero-copy genome pointers directly into the mmap region.
-    packed_ptr_ = p + off;                                            // off = 18
+    packed_ptr_ = p + packed_offset;
     nmask_ptr_  = reinterpret_cast<const uint64_t*>(p + nmask_offset);
     off = nmask_offset + nmask_bytes;
 
@@ -458,5 +482,24 @@ int KmerIndex::verify_match(uint32_t genome_pos,
                              uint32_t read_len) const {
     return count_mismatches(packed_ptr_, nmask_ptr_,
                             genome_pos, read_packed, read_len);
+}
+
+std::string KmerIndex::genome_substr(uint32_t pos, uint32_t len) const {
+    if (pos + len > genome_size_)
+        throw std::out_of_range("KmerIndex::genome_substr: range out of bounds");
+
+    static constexpr char ALPHA[4] = {'A', 'C', 'G', 'T'};
+    std::string out(len, 'A');
+    for (uint32_t i = 0; i < len; ++i) {
+        const uint32_t gp = pos + i;
+        const bool is_n = ((nmask_ptr_[gp / 64] >> (gp % 64)) & uint64_t{1}) != 0;
+        if (is_n) {
+            out[i] = 'N';
+            continue;
+        }
+        const uint8_t b = (packed_ptr_[gp / 4] >> ((gp % 4) * 2)) & 3u;
+        out[i] = ALPHA[b];
+    }
+    return out;
 }
 

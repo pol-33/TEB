@@ -9,14 +9,17 @@
 #include "kmer_index.hpp"
 #include "../io/fastq.hpp"
 #include "../io/sam.hpp"
+#include "../util/alignment.hpp"
+#include "../util/dna_encoding.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cctype>
+#include <cstdint>
 #include <cstdlib>
 #include <getopt.h>
 #include <iostream>
 #include <string>
-#include <unordered_set>
 #include <vector>
 
 // ---- CLI config ---------------------------------------------------------- //
@@ -103,24 +106,79 @@ static MapperConfig parse_args(int argc, char* argv[]) {
     return cfg;
 }
 
-// ---- 2-bit read packing -------------------------------------------------- //
+struct CandidatePool {
+    static constexpr size_t MAX_CANDIDATES = 200;
+    std::vector<uint32_t> starts;
+    bool anchor_set = false;
+    uint32_t anchor = 0;
 
-static uint8_t base_enc(char c) noexcept {
-    switch (c) {
-        case 'A': case 'a': return 0;
-        case 'C': case 'c': return 1;
-        case 'G': case 'g': return 2;
-        case 'T': case 't': return 3;
-        default:            return 0;
+    CandidatePool() { starts.reserve(MAX_CANDIDATES); }
+
+    void add(uint32_t rs) {
+        for (uint32_t x : starts) {
+            if (x == rs) return;
+        }
+
+        if (!anchor_set) {
+            anchor = rs;
+            anchor_set = true;
+        }
+
+        if (starts.size() < MAX_CANDIDATES) {
+            starts.push_back(rs);
+            return;
+        }
+
+        const auto dist = [](uint32_t a, uint32_t b) -> uint64_t {
+            return (a > b) ? static_cast<uint64_t>(a - b)
+                           : static_cast<uint64_t>(b - a);
+        };
+
+        size_t worst_idx = 0;
+        uint64_t worst_dist = dist(starts[0], anchor);
+        for (size_t i = 1; i < starts.size(); ++i) {
+            const uint64_t d = dist(starts[i], anchor);
+            if (d > worst_dist) {
+                worst_dist = d;
+                worst_idx = i;
+            }
+        }
+
+        const uint64_t new_dist = dist(rs, anchor);
+        if (new_dist < worst_dist)
+            starts[worst_idx] = rs;
     }
-}
+};
+
+struct Hit {
+    int edit = 0;
+    uint32_t pos = 0; // 1-based
+    std::string cigar;
+};
 
 static std::vector<uint8_t> pack_read(const std::string& seq) {
     const size_t bytes = (seq.size() + 3) / 4;
     std::vector<uint8_t> out(bytes, 0);
     for (size_t i = 0; i < seq.size(); ++i)
-        out[i / 4] |= static_cast<uint8_t>(base_enc(seq[i]) << ((i % 4) * 2));
+        out[i / 4] |= static_cast<uint8_t>(dna::ENC_2BIT.v[static_cast<unsigned char>(seq[i])] << ((i % 4) * 2));
     return out;
+}
+
+static void push_best_two(const Hit& h, bool& has1, Hit& b1, bool& has2, Hit& b2) {
+    if (!has1 || h.edit < b1.edit) {
+        if (has1) {
+            b2 = b1;
+            has2 = true;
+        }
+        b1 = h;
+        has1 = true;
+        return;
+    }
+
+    if (!has2 || h.edit < b2.edit) {
+        b2 = h;
+        has2 = true;
+    }
 }
 
 // ---- main ---------------------------------------------------------------- //
@@ -136,26 +194,27 @@ int main(int argc, char* argv[]) {
               << (cfg.load_mode == LoadMode::MEMORY ? "MEMORY" : "SPEED") << "\n";
 
     // Load index.
-    auto index_base = GenomeIndex::create(IndexAlgo::KMER, OptimizeMode::SPEED);
-    auto* kmer_idx  = dynamic_cast<KmerIndex*>(index_base.get());
-    if (!kmer_idx) {
-        std::cerr << "Error: failed to create KmerIndex.\n";
-        return EXIT_FAILURE;
-    }
+    auto kmer_idx = std::make_unique<KmerIndex>();
     kmer_idx->load(cfg.idx_path, cfg.load_mode);
     std::cerr << "[mapper] Index loaded.\n";
 
+    const std::string chrom = kmer_idx->chrom_name();
+    const uint32_t glen = kmer_idx->genome_size();
+    if (chrom.empty()) {
+        std::cerr << "Error: index does not contain chromosome name metadata.\n";
+        return EXIT_FAILURE;
+    }
+
     // Open SAM output.
-    // The genome size and ref name are encoded in the index; we use generic
-    // values for the header (SAM still validates; aligners like BWA do the same
-    // when ref info isn't readily available).
     SamWriter sam(cfg.output_path);
-    sam.write_header("ref", kmer_idx->genome_size());
+    sam.write_header(chrom, glen);
 
     // Map reads.
     FastqReader reader(cfg.reads_path);
     Read r;
     uint64_t total = 0, mapped_count = 0;
+    constexpr uint64_t REPORT_EVERY = 100000; // print status every 100k reads
+    auto t0 = std::chrono::steady_clock::now();
 
     while (reader.next(r)) {
         ++total;
@@ -165,69 +224,98 @@ int main(int argc, char* argv[]) {
 
         const size_t   k        = kmer_idx->k_val();
         const uint32_t read_len = static_cast<uint32_t>(r.seq.size());
+        const std::string& read_seq = r.seq;
+        const std::string& read_qual = r.qual;
 
         // --- Pack the read ---
-        const auto packed = pack_read(r.seq);
+        const auto packed = pack_read(read_seq);
 
         // --- Handle reads shorter than k: always unmapped ---
         if (read_len < static_cast<uint32_t>(k)) {
-            sam.write_alignment(r.name, 0, r.seq, 0, false);
             continue;
         }
 
-        // --- Pigeonhole multi-k-mer query ---
-        // With ≤ max_errors mismatches in a read, querying k-mers at intervals
-        // of  step = floor(k / (max_errors + 1))  guarantees at least one of
-        // the queried k-mers is error-free and will be found by the index.
-        const size_t step = std::max(size_t{1},
-                                     k / static_cast<size_t>(cfg.max_errors + 1));
-
-        // Collect unique candidate read-start positions from all k-mer offsets.
-        std::unordered_set<uint32_t> candidate_starts;
-
-        auto add_candidates = [&](size_t off) {
-            for (uint32_t gpos : kmer_idx->query(r.seq.substr(off, k))) {
+        // Seed phase: non-overlapping seeds of size index k.
+        CandidatePool candidates;
+        std::string seed;
+        seed.reserve(k);
+        for (size_t off = 0; off + k <= read_seq.size(); off += k) {
+            seed.assign(read_seq, off, k);
+            for (uint32_t gpos : kmer_idx->query(seed)) {
                 if (gpos < static_cast<uint32_t>(off)) continue;
                 const uint32_t rs = gpos - static_cast<uint32_t>(off);
-                if (rs + read_len <= kmer_idx->genome_size())
-                    candidate_starts.insert(rs);
-            }
-        };
-
-        for (size_t off = 0; off + k <= r.seq.size(); off += step)
-            add_candidates(off);
-
-        // Always include the last k-mer so the tail of the read is covered.
-        const size_t last_off = r.seq.size() - k;
-        if (last_off % step != 0)
-            add_candidates(last_off);
-
-        // --- Find best-scoring (fewest mismatches) candidate ---
-        int      best_mm  = cfg.max_errors + 1;
-        uint32_t best_pos = 0;
-        bool     found    = false;
-
-        for (uint32_t rs : candidate_starts) {
-            const int mm = kmer_idx->verify_match(rs, packed.data(), read_len);
-            if (mm <= cfg.max_errors && mm < best_mm) {
-                best_mm  = mm;
-                best_pos = rs;
-                found    = true;
-                if (mm == 0) break;  // can't do better
+                if (rs + read_len <= glen)
+                    candidates.add(rs);
             }
         }
 
-        if (found) {
+        bool has1 = false;
+        bool has2 = false;
+        Hit b1{};
+        Hit b2{};
+
+        for (uint32_t rs : candidates.starts) {
+            if (cfg.max_errors == 0) {
+                // k=0 hot path: avoid substring/DP and use packed SIMD compare.
+                const int mm = kmer_idx->verify_match(rs, packed.data(), read_len);
+                if (mm == 0) {
+                    Hit h;
+                    h.edit = 0;
+                    h.pos = rs + 1;
+                    h.cigar = std::to_string(read_len) + "M";
+                    push_best_two(h, has1, b1, has2, b2);
+                }
+                continue;
+            }
+
+            const uint32_t ext_len = std::min<uint32_t>(glen - rs, read_len + static_cast<uint32_t>(cfg.max_errors));
+            const std::string text = kmer_idx->genome_substr(rs, ext_len);
+            const AlignResult ar = align_banded(read_seq, text, cfg.max_errors);
+            if (ar.edit_dist <= cfg.max_errors && !ar.cigar.empty()) {
+                Hit h;
+                h.edit = ar.edit_dist;
+                h.pos = rs + 1;
+                h.cigar = ar.cigar;
+                push_best_two(h, has1, b1, has2, b2);
+                if (has2 && b1.edit == 0 && b2.edit == 0)
+                    break;
+            }
+        }
+
+        if (has1) {
             ++mapped_count;
-            sam.write_alignment(r.name, best_pos, r.seq, best_mm, true);
-        } else {
-            sam.write_alignment(r.name, 0, r.seq, 0, false);
+            if (has2) {
+                sam.write_alignment(r.name, chrom, b1.pos, b1.cigar,
+                                    read_seq, read_qual,
+                                    chrom, b2.pos, b2.cigar);
+            } else {
+                sam.write_alignment(r.name, chrom, b1.pos, b1.cigar,
+                                    read_seq, read_qual);
+            }
+        }
+
+        if (total % REPORT_EVERY == 0) {
+            const auto now = std::chrono::steady_clock::now();
+            const double elapsed_s = std::chrono::duration<double>(now - t0).count();
+            const double reads_per_s = (elapsed_s > 0.0)
+                ? static_cast<double>(total) / elapsed_s
+                : 0.0;
+
+            std::cerr << "[mapper] Progress: " << total << " reads, "
+                      << mapped_count << " mapped ("
+                      << (total ? (100ULL * mapped_count / total) : 0) << "%), "
+                      << static_cast<uint64_t>(reads_per_s) << " reads/s, "
+                      << static_cast<uint64_t>(elapsed_s) << " s elapsed\n";
         }
     }
 
+    const auto t1 = std::chrono::steady_clock::now();
+    const double total_elapsed_s = std::chrono::duration<double>(t1 - t0).count();
+
     std::cerr << "[mapper] Processed " << total   << " reads, "
               << mapped_count << " mapped ("
-              << (total ? (100ULL * mapped_count / total) : 0) << "%).\n";
+              << (total ? (100ULL * mapped_count / total) : 0) << "%), "
+              << static_cast<uint64_t>(total_elapsed_s) << " s total.\n";
 
     return EXIT_SUCCESS;
 }

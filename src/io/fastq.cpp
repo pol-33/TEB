@@ -63,8 +63,8 @@ bool FastqReader::next(Read& r) {
 
     // Strip leading '@' and everything after the first space for the name.
     r.name = header.substr(1);
-    const auto sp = r.name.find(' ');
-    if (sp != std::string::npos) r.name = r.name.substr(0, sp);
+    const auto ws = r.name.find_first_of(" \t");
+    if (ws != std::string::npos) r.name.resize(ws);
 
     return true;
 }

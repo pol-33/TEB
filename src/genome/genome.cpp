@@ -1,5 +1,6 @@
 #include "genome.hpp"
 #include "binary.hpp"
+#include "../util/dna_encoding.hpp"
 
 #include <istream>
 #include <ostream>
@@ -24,18 +25,6 @@
  *   packed_  = { 0xE4, 0x90, 0x03 }
  *   n_mask_[0] = 1 << 4 = 0x0000000000000010  (only position 4 is N)
  */
-
-// char → 2-bit code; N and unknowns map to 0 (A).
-static constexpr auto make_encode_table() noexcept {
-    struct T { uint8_t v[256]; };
-    T t{};
-    t.v[static_cast<unsigned>('A')] = t.v[static_cast<unsigned>('a')] = 0;
-    t.v[static_cast<unsigned>('C')] = t.v[static_cast<unsigned>('c')] = 1;
-    t.v[static_cast<unsigned>('G')] = t.v[static_cast<unsigned>('g')] = 2;
-    t.v[static_cast<unsigned>('T')] = t.v[static_cast<unsigned>('t')] = 3;
-    return t;
-}
-static constexpr auto ENC = make_encode_table();
 
 // byte value → 4 decoded chars (LSB-first sub-position order).
 static constexpr auto make_lut() noexcept {
@@ -64,7 +53,7 @@ void GenomeStorage::encode(const std::string& seq) {
         const auto c = static_cast<unsigned char>(seq[i]);
         if (c == 'N' || c == 'n')
             n_mask_[i / 64] |= (uint64_t{1} << (i % 64));
-        packed_[i / 4] |= static_cast<uint8_t>(ENC.v[c] << ((i % 4) * 2));
+        packed_[i / 4] |= static_cast<uint8_t>(dna::ENC_2BIT.v[c] << ((i % 4) * 2));
     }
 }
 

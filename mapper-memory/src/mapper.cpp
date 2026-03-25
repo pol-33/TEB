@@ -120,7 +120,7 @@ mapper_memory::Alignment verify_index_candidate(const mapper_memory::FMIndexView
         mapper_memory::Alignment current = mapper_memory::band_align(normalized_read, ref_buffer, max_errors, workspace);
         if (current.edit_dist <= max_errors && current.edit_dist < best.edit_dist) {
             current.chrom = std::string(index.chromosome_name(chrom_index));
-            current.ref_pos = genome_pos + 1ULL;
+            current.ref_pos = genome_pos - index.chromosome_offset(chrom_index) + 1ULL;
             best = current;
         }
     }
@@ -155,7 +155,7 @@ mapper_memory::Alignment verify_fallback_candidate(const mapper_memory::FastaDat
         mapper_memory::Alignment current = mapper_memory::band_align(normalized_read, ref_buffer, max_errors, workspace);
         if (current.edit_dist <= max_errors && current.edit_dist < best.edit_dist) {
             current.chrom = chrom.name;
-            current.ref_pos = genome_pos + 1ULL;
+            current.ref_pos = genome_pos - chrom.offset + 1ULL;
             best = current;
         }
     }

@@ -23,6 +23,24 @@ make
 
 `-I` mode is the intended competition workflow. `-R` mode is a correctness-first fallback that scans the genome directly and is not designed for the contest-sized input.
 
+## Benchmarking
+
+Use the bundled benchmark harness to run a timed mapper job, validate the simplified SAM-like output, and optionally compare a smaller subset against `bwa mem`:
+
+```bash
+./bench.sh
+```
+
+Useful overrides:
+
+```bash
+BUILD_INDEX_IF_MISSING=1 BENCH_READS=10000 CORRECTNESS_READS=500 ./bench.sh
+BUILD_INDEX_IF_MISSING=1 BENCH_READS=0 ./bench.sh
+BUILD_BWA_INDEX_IF_MISSING=1 ./bench.sh
+```
+
+By default the script avoids surprise multi-hour setup work: it will reuse an existing FM-index, and it will only build the FM-index or the `bwa` index automatically when the corresponding `*_IF_MISSING=1` flag is set.
+
 ## Implementation Notes
 
 - FASTA input is flattened into a contiguous genome plus chromosome metadata.

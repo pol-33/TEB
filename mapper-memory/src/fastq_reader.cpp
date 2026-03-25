@@ -41,6 +41,10 @@ bool FastqReader::next(Read& read) {
         throw std::runtime_error("FASTQ sequence/quality length mismatch");
     }
     read.name = header.substr(1);
+    const std::size_t first_space = read.name.find_first_of(" \t");
+    if (first_space != std::string::npos) {
+        read.name.resize(first_space);
+    }
     return true;
 }
 

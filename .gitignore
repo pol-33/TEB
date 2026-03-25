@@ -17,3 +17,4 @@ mapper
 *.sam
 
 test
+bench-results

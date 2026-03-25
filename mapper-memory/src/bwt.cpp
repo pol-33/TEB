@@ -1,6 +1,8 @@
 #include "bwt.hpp"
 
 #include <algorithm>
+#include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 
@@ -209,6 +211,15 @@ std::vector<int> sa_is_impl(const std::vector<int>& s, int upper) {
 }  // namespace
 
 std::vector<uint32_t> build_suffix_array_sais(const std::string& genome) {
+    if (genome.size() + 1ULL > static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+        std::ostringstream oss;
+        oss << "reference length " << genome.size()
+            << " exceeds the current in-memory SA-IS implementation limit of "
+            << std::numeric_limits<int>::max()
+            << " symbols; this builder uses signed 32-bit indices internally and is not yet suitable for GRCh38-scale indexing";
+        throw std::runtime_error(oss.str());
+    }
+
     std::vector<int> text;
     text.reserve(genome.size() + 1);
     for (char base : genome) {

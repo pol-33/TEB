@@ -86,11 +86,12 @@ has_bwa_index() {
 run_with_time() {
   local label="$1"
   local stdout_path="$2"
-  local time_path="$3"
-  shift 3
+  local stderr_path="$3"
+  local time_path="$4"
+  shift 4
 
   log "running $label"
-  /usr/bin/time -l "$@" > "$stdout_path" 2> "$time_path"
+  /usr/bin/time -l -o "$time_path" "$@" > "$stdout_path" 2> >(tee "$stderr_path" >&2)
 }
 
 parse_time_report() {
@@ -137,6 +138,33 @@ write_chrom_sizes() {
       }
     }
   ' "$ref_path" > "$output_path"
+}
+
+write_failure_summary() {
+  local phase="$1"
+  local reason="$2"
+  local summary_path="$OUT_DIR/summary.txt"
+
+  {
+    echo "Benchmark Summary"
+    echo "================="
+    echo "reference: $REF"
+    echo "reads: $READS"
+    echo "index: $INDEX"
+    echo "k: $K"
+    echo
+    echo "status: FAILED"
+    echo "phase: $phase"
+    echo "reason: $reason"
+    echo
+    if [[ -f "$OUT_DIR/${phase}.metrics" ]]; then
+      echo "Captured Metrics"
+      echo "----------------"
+      cat "$OUT_DIR/${phase}.metrics"
+    fi
+  } > "$summary_path"
+
+  cat "$summary_path"
 }
 
 validate_mapper_output() {
@@ -362,9 +390,11 @@ log "building mapper-memory binaries"
 make -C "$ROOT_DIR"
 
 CHROM_SIZES="$OUT_DIR/chrom.sizes.tsv"
+log "scanning reference to compute chromosome sizes"
 write_chrom_sizes "$REF" "$CHROM_SIZES"
 
 BENCH_FASTQ="$OUT_DIR/bench_reads.fastq"
+log "preparing benchmark read set"
 extract_subset "$READS" "$BENCH_READS" "$BENCH_FASTQ"
 BENCH_READ_COUNT="$(count_reads "$BENCH_FASTQ")"
 
@@ -375,10 +405,19 @@ else
     warn "FM-index not found at $INDEX"
     warn "Set BUILD_INDEX_IF_MISSING=1 to time index construction automatically."
   else
+    log "full FM-index build requested; on GRCh38 this can take a long time before mapping starts"
     INDEX_STDOUT="$OUT_DIR/index.stdout.log"
+    INDEX_STDERR="$OUT_DIR/index.stderr.log"
     INDEX_TIME="$OUT_DIR/index.time.log"
-    run_with_time "indexer" "$INDEX_STDOUT" "$INDEX_TIME" "$ROOT_DIR/indexer" -R "$REF" -I "$INDEX"
-    parse_time_report "$INDEX_TIME" > "$OUT_DIR/index.metrics"
+    if run_with_time "indexer" "$INDEX_STDOUT" "$INDEX_STDERR" "$INDEX_TIME" "$ROOT_DIR/indexer" -R "$REF" -I "$INDEX"; then
+      parse_time_report "$INDEX_TIME" > "$OUT_DIR/index.metrics"
+    else
+      if [[ -f "$INDEX_TIME" ]]; then
+        parse_time_report "$INDEX_TIME" > "$OUT_DIR/index.metrics"
+      fi
+      write_failure_summary "index" "FM-index construction failed before mapping. See $INDEX_STDERR"
+      exit 1
+    fi
   fi
 fi
 
@@ -392,8 +431,8 @@ MAP_TIME="$OUT_DIR/mapper.time.log"
 MAP_STDERR="$OUT_DIR/mapper.stderr.log"
 
 log "benchmarking mapper on $BENCH_READ_COUNT read(s) with k=$K"
-/usr/bin/time -l "$ROOT_DIR/mapper" -I "$INDEX" -i "$BENCH_FASTQ" -o "$MAP_OUTPUT" -k "$K" > /dev/null 2> "$MAP_TIME" || {
-  cat "$MAP_TIME" >&2
+run_with_time "mapper" /dev/null "$MAP_STDERR" "$MAP_TIME" "$ROOT_DIR/mapper" -I "$INDEX" -i "$BENCH_FASTQ" -o "$MAP_OUTPUT" -k "$K" || {
+  cat "$MAP_STDERR" >&2
   die "mapper run failed"
 }
 
@@ -449,8 +488,9 @@ if ! has_bwa_index; then
     exit 0
   fi
   BWA_INDEX_STDOUT="$OUT_DIR/bwa-index.stdout.log"
+  BWA_INDEX_STDERR="$OUT_DIR/bwa-index.stderr.log"
   BWA_INDEX_TIME="$OUT_DIR/bwa-index.time.log"
-  run_with_time "bwa index" "$BWA_INDEX_STDOUT" "$BWA_INDEX_TIME" bwa index "$REF"
+  run_with_time "bwa index" "$BWA_INDEX_STDOUT" "$BWA_INDEX_STDERR" "$BWA_INDEX_TIME" bwa index "$REF"
   parse_time_report "$BWA_INDEX_TIME" > "$OUT_DIR/bwa-index.metrics"
 fi
 
@@ -464,8 +504,9 @@ log "running mapper correctness subset ($CORRECTNESS_COUNT reads)"
 validate_mapper_output "$MAPPER_CORRECTNESS_OUTPUT" "$CHROM_SIZES" "$CORRECTNESS_COUNT" "$OUT_DIR/correctness.validation"
 
 BWA_SAM="$OUT_DIR/correctness.bwa.sam"
+BWA_STDERR="$OUT_DIR/correctness.bwa.stderr.log"
 BWA_TIME="$OUT_DIR/correctness.bwa.time.log"
-run_with_time "bwa mem" "$BWA_SAM" "$BWA_TIME" bwa mem "$REF" "$CORRECTNESS_FASTQ"
+run_with_time "bwa mem" "$BWA_SAM" "$BWA_STDERR" "$BWA_TIME" bwa mem "$REF" "$CORRECTNESS_FASTQ"
 parse_time_report "$BWA_TIME" > "$OUT_DIR/correctness.bwa.metrics"
 
 MAPPER_TSV="$OUT_DIR/correctness.mapper.tsv"

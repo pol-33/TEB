@@ -1,70 +1,87 @@
-# TEB — Bioinformatics Parser
+# TEB Sequence Mapper Project
+
+This repository now contains two mapper variants for the TEB competitive bioinformatics project:
+
+- `mapper-memory/`: an FM-index-based mapper tuned for lower peak RSS during mapping
+- `mapper-speed/`: a future minimizer/hash mapper reserved for the speed-focused track
+
+The original FASTA/FASTQ parser coursework has been preserved under `legacy/`.
 
 ## Build
 
+Build the memory-oriented implementation:
+
 ```bash
-make        # builds the `teb` executable
-make clean  # removes object files and the executable
-make re     # clean + build
+cd mapper-memory
+make
 ```
 
-The exercises can be compiled independently:
+Build the speed-oriented placeholder:
+
 ```bash
-make exercises/ex2_1   # naive exact search
-make exercises/ex5_2   # full Boyer-Moore
+cd mapper-speed
+make
 ```
 
----
+## Data
 
-## Usage
+Recommended inputs:
 
-```
-./teb.exe -i <file> -f <fasta|fastq> [-o <file>] [-qmin <int>]
-```
+- GRCh38 reference FASTA as `genome.fa`
+- First 1 million reads from ERR194147 as `reads_1M.fastq`
 
-| Argument | Required | Description |
-|---|---|---|
-| `-i <file>` | ✅ | Input FASTA or FASTQ file |
-| `-f <fasta\|fastq>` | ✅ | Input file format |
-| `-o <file>` | ❌ | Write parsed sequences to this file. Omit for stats-only mode |
-| `-qmin <int>` | ❌ | FASTQ only — trim bases from the right with quality score below this threshold |
-| `-k <int>` | ❌ | FASTA only — compute k-mer frequencies for this k (e.g. 3 for trinucleotides) |
+Suggested download commands:
 
----
-
-## Examples
-
-**FASTA — stats only (no output file):**
 ```bash
-./teb.exe -i datasets/chr1.fna -f fasta
+wget -O genome.fa https://ftp.ncbi.nlm.nih.gov/genomes/all/GCA/000/001/405/GCA_000001405.15_GRCh38/GCA_000001405.15_GRCh38_no_alt_analysis_set.fna.gz
+gunzip genome.fa
+prefetch ERR194147
+fasterq-dump ERR194147 --split-files
+head -n 4000000 ERR194147_1.fastq > reads_1M.fastq
 ```
 
-**FASTA — parse and write output:**
+See [data/README.md](/Users/polplana/Documents/Universitat/TEB/teb/data/README.md) for local placement guidance.
+
+## CLI
+
+Build the FM-index:
+
 ```bash
-./teb.exe -i datasets/chr1.fna -f fasta -o output/chr1-out.fna
+cd mapper-memory
+./indexer -R /path/to/genome.fa -I /path/to/genome.idx
 ```
 
-**FASTQ — stats only:**
+Map reads with the serialized index:
+
 ```bash
-./teb.exe -i datasets/SRR22320000_1.fastq -f fastq
+cd mapper-memory
+./mapper -I /path/to/genome.idx -i /path/to/reads_1M.fastq -o /path/to/output.sam -k 1
 ```
 
-**FASTQ — parse with quality trimming and write output:**
+Fallback direct genome scan:
+
 ```bash
-./teb.exe -i datasets/SRR22320000_1.fastq -f fastq -o output/SRR1-out.fastq -qmin 20
+cd mapper-memory
+./mapper -R /path/to/genome.fa -i /path/to/reads_1M.fastq -o /path/to/output.sam -k 1
 ```
 
----
+Output format:
 
-## Project structure
+```text
+read_name chrom pos_1based cigar seq qual [ALT:chrom,pos,cigar]
+```
 
+Unmapped reads are emitted as:
+
+```text
+read_name * 0 * seq qual
 ```
-teb/
-├── src/               # Source files (.cpp)
-├── include/           # Header files (.hpp)
-├── exercises/         # Standalone exercise programs
-├── datasets/          # Input genomic data
-├── docs/              # Lab assignment PDFs
-├── output/            # Generated output files
-└── Makefile
-```
+
+## Expected Performance
+
+Approximate target numbers for the memory-oriented mapper on contest-sized data:
+
+- Index build: around 20 minutes
+- Mapping: around 15 minutes at `k=1`
+
+These numbers are project goals rather than guarantees for every machine. The current implementation prioritizes the required architecture and correctness path first.

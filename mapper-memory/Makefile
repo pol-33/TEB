@@ -1,13 +1,13 @@
 CXX      = g++
-CXXFLAGS = -O2 -std=c++17 -Wall -Wextra -Iinclude
+CXXFLAGS = -O2 -std=c++17 -Wall -Wextra -MMD -MP -Iinclude
 LDFLAGS  =
 
 SRC_DIR  = src
 OBJ_DIR  = obj
 
-COMMON_SRCS = bwt.cpp fm_index.cpp backward_search.cpp alignment.cpp \
-              fastq_reader.cpp fasta_reader.cpp
+COMMON_SRCS = seed_index.cpp alignment.cpp fastq_reader.cpp
 COMMON_OBJS = $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(COMMON_SRCS))
+DEPS = $(COMMON_OBJS:.o=.d) $(OBJ_DIR)/indexer.d $(OBJ_DIR)/mapper.d
 
 all: indexer mapper
 
@@ -29,3 +29,5 @@ clean:
 re: clean all
 
 .PHONY: all clean re
+
+-include $(DEPS)

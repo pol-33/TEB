@@ -2,7 +2,7 @@
 
 This repository now contains two mapper variants for the TEB competitive bioinformatics project:
 
-- `mapper-memory/`: an FM-index-based mapper tuned for lower peak RSS during mapping
+- `mapper-memory/`: a low-memory seed-index mapper tuned for lower peak RSS during mapping
 - `mapper-speed/`: a future minimizer/hash mapper reserved for the speed-focused track
 
 The original FASTA/FASTQ parser coursework has been preserved under `legacy/`.
@@ -44,25 +44,18 @@ See [data/README.md](/Users/polplana/Documents/Universitat/TEB/teb/data/README.m
 
 ## CLI
 
-Build the FM-index:
+Build the memory mapper index:
 
 ```bash
 cd mapper-memory
-./indexer -R /path/to/genome.fa -I /path/to/genome.idx
+./indexer -R /path/to/genome.fa -I /path/to/genome.seed.idx
 ```
 
 Map reads with the serialized index:
 
 ```bash
 cd mapper-memory
-./mapper -I /path/to/genome.idx -i /path/to/reads_1M.fastq -o /path/to/output.sam -k 1
-```
-
-Fallback direct genome scan:
-
-```bash
-cd mapper-memory
-./mapper -R /path/to/genome.fa -i /path/to/reads_1M.fastq -o /path/to/output.sam -k 1
+./mapper -I /path/to/genome.seed.idx -i /path/to/reads_1M.fastq -o /path/to/output.sam -k 1
 ```
 
 Output format:
@@ -81,7 +74,7 @@ read_name * 0 * seq qual
 
 Approximate target numbers for the memory-oriented mapper on contest-sized data:
 
-- Index build: around 20 minutes
-- Mapping: around 15 minutes at `k=1`
+- Index build: a large one-time job on GRCh38
+- Mapping: depends strongly on `k`, read repetitiveness, and file-cache warmth
 
 These numbers are project goals rather than guarantees for every machine. The current implementation prioritizes the required architecture and correctness path first.

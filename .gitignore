@@ -16,5 +16,7 @@ mapper
 *.idx
 *.sam
 
+*.fa.*
+
 test
 bench-results

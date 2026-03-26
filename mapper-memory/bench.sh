@@ -7,7 +7,7 @@ REPO_DIR="$(cd "$ROOT_DIR/.." && pwd)"
 
 REF="${REF:-$REPO_DIR/data/genome.fa}"
 READS="${READS:-$REPO_DIR/data/reads_1M.fastq}"
-INDEX="${INDEX:-$ROOT_DIR/bench-results/genome.fmidx}"
+INDEX="${INDEX:-$ROOT_DIR/bench-results/genome.seed.idx}"
 OUT_DIR="${OUT_DIR:-$ROOT_DIR/bench-results}"
 K="${K:-1}"
 BENCH_READS="${BENCH_READS:-1000}"
@@ -38,12 +38,12 @@ Usage: ./bench.sh
 Environment overrides:
   REF=...                     Reference FASTA (default: ../data/genome.fa)
   READS=...                   FASTQ reads (default: ../data/reads_1M.fastq)
-  INDEX=...                   FM-index output / input path
+  INDEX=...                   Seed-index output / input path
   OUT_DIR=...                 Benchmark output directory
   K=1                         Maximum edit distance (0..3)
   BENCH_READS=1000            Reads used for the timed mapper run; set to 0 for the full file
   CORRECTNESS_READS=250       Reads used for the optional bwa-based correctness check
-  BUILD_INDEX_IF_MISSING=0    Set to 1 to build the FM-index automatically when INDEX is absent
+  BUILD_INDEX_IF_MISSING=0    Set to 1 to build the seed index automatically when INDEX is absent
   RUN_BWA_CHECK=1             Set to 0 to skip the professional-baseline comparison
   BUILD_BWA_INDEX_IF_MISSING=0
                               Set to 1 to run 'bwa index' automatically when missing
@@ -51,7 +51,7 @@ Environment overrides:
 Notes:
   - The contest judges mapping time and peak RSS excluding index build time.
   - This script records both index-build metrics and mapping metrics separately.
-  - On a full GRCh38 reference, automatic index construction can be very expensive.
+  - On a full GRCh38 reference, automatic index construction is a large one-time job.
 EOF
 }
 
@@ -91,7 +91,12 @@ run_with_time() {
   shift 4
 
   log "running $label"
-  /usr/bin/time -l -o "$time_path" "$@" > "$stdout_path" 2> >(tee "$stderr_path" >&2)
+  /usr/bin/time -l -o "$time_path" "$@" > "$stdout_path" 2> "$stderr_path"
+  local rc=$?
+  if [[ -f "$stderr_path" && -s "$stderr_path" ]]; then
+    cat "$stderr_path" >&2
+  fi
+  return "$rc"
 }
 
 parse_time_report() {
@@ -390,8 +395,12 @@ log "building mapper-memory binaries"
 make -C "$ROOT_DIR"
 
 CHROM_SIZES="$OUT_DIR/chrom.sizes.tsv"
-log "scanning reference to compute chromosome sizes"
-write_chrom_sizes "$REF" "$CHROM_SIZES"
+if [[ -f "$CHROM_SIZES" && "$CHROM_SIZES" -nt "$REF" ]]; then
+  log "using cached chromosome sizes: $CHROM_SIZES"
+else
+  log "scanning reference to compute chromosome sizes"
+  write_chrom_sizes "$REF" "$CHROM_SIZES"
+fi
 
 BENCH_FASTQ="$OUT_DIR/bench_reads.fastq"
 log "preparing benchmark read set"
@@ -399,13 +408,13 @@ extract_subset "$READS" "$BENCH_READS" "$BENCH_FASTQ"
 BENCH_READ_COUNT="$(count_reads "$BENCH_FASTQ")"
 
 if [[ -f "$INDEX" ]]; then
-  log "using existing FM-index: $INDEX"
+  log "using existing seed index: $INDEX"
 else
   if [[ "$BUILD_INDEX_IF_MISSING" != "1" ]]; then
-    warn "FM-index not found at $INDEX"
+    warn "seed index not found at $INDEX"
     warn "Set BUILD_INDEX_IF_MISSING=1 to time index construction automatically."
   else
-    log "full FM-index build requested; on GRCh38 this can take a long time before mapping starts"
+    log "full seed-index build requested; on GRCh38 this can take a long time before mapping starts"
     INDEX_STDOUT="$OUT_DIR/index.stdout.log"
     INDEX_STDERR="$OUT_DIR/index.stderr.log"
     INDEX_TIME="$OUT_DIR/index.time.log"
@@ -415,14 +424,14 @@ else
       if [[ -f "$INDEX_TIME" ]]; then
         parse_time_report "$INDEX_TIME" > "$OUT_DIR/index.metrics"
       fi
-      write_failure_summary "index" "FM-index construction failed before mapping. See $INDEX_STDERR"
+      write_failure_summary "index" "seed-index construction failed before mapping. See $INDEX_STDERR"
       exit 1
     fi
   fi
 fi
 
 if [[ ! -f "$INDEX" ]]; then
-  warn "skipping mapper benchmark because no FM-index is available."
+  warn "skipping mapper benchmark because no seed index is available."
   exit 0
 fi
 

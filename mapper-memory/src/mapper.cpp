@@ -191,11 +191,24 @@ void search_orientation(const mapper_memory::FMIndexView& index,
         const auto& chrom = index.chromosome(chrom_index);
         search_results.clear();
 
+#ifdef DEBUG
+        std::cerr << "[mapper-debug] searching chromosome " << chrom_index << "/" << index.chromosome_count() << "\n";
+#endif
+
         const mapper_memory::SAInterval exact = mapper_memory::exact_search(chrom, normalized_read);
         if (exact.lo < exact.hi) {
             search_results.push_back(mapper_memory::SearchResult{exact.lo, exact.hi, 0});
+#ifdef DEBUG
+            std::cerr << "[mapper-debug] exact match found: SA[" << exact.lo << "," << exact.hi << ")\n";
+#endif
         } else if (max_errors > 0) {
+#ifdef DEBUG
+            std::cerr << "[mapper-debug] no exact match, starting inexact search\n";
+#endif
             mapper_memory::inexact_search(chrom, normalized_read, max_errors, search_results, 32U);
+#ifdef DEBUG
+            std::cerr << "[mapper-debug] inexact search found " << search_results.size() << " results\n";
+#endif
         }
         if (search_results.empty()) {
             continue;
@@ -245,7 +258,11 @@ int main(int argc, char* argv[]) {
         std::ios::sync_with_stdio(false);
         const Config config = parse_args(argc, argv);
 
+        std::cerr << "[mapper] loading FM-index from " << config.index_path << "\n";
         mapper_memory::FMIndexView index(config.index_path);
+        std::cerr << "[mapper] index loaded, " << index.chromosome_count() << " chromosomes\n";
+        
+        std::cerr << "[mapper] opening reads from " << config.reads_path << "\n";
         mapper_memory::FastqReader reader(config.reads_path);
         std::ofstream out(config.output_path);
         if (!out) {
@@ -254,6 +271,8 @@ int main(int argc, char* argv[]) {
         std::vector<char> output_buffer(4 * 1024 * 1024);
         out.rdbuf()->pubsetbuf(output_buffer.data(), static_cast<std::streamsize>(output_buffer.size()));
 
+        std::cerr << "[mapper] starting read processing with k=" << config.max_errors << "\n";
+        
         mapper_memory::AlignmentWorkspace workspace;
         mapper_memory::Read read;
         std::vector<mapper_memory::SearchResult> search_results;
@@ -268,22 +287,37 @@ int main(int argc, char* argv[]) {
 
         uint64_t processed = 0;
         while (reader.next(read)) {
+#ifdef DEBUG
+            if (processed % 1000ULL == 0ULL) {
+                std::cerr << "[mapper] processing read " << processed << ": " << read.name << "\n";
+            }
+#endif
             normalized = mapper_memory::normalize_sequence(read.seq);
             best_alignments.clear();
             seen_positions.clear();
 
+#ifdef DEBUG
+            std::cerr << "[mapper-debug] read " << processed << " forward search\n";
+#endif
             search_orientation(index, normalized, config.max_errors, workspace, ref_buffer,
                                seen_positions, search_results, best_alignments);
 
             reverse_complement = reverse_complement_sequence(normalized);
             if (reverse_complement != normalized || best_alignments.empty()) {
+#ifdef DEBUG
+                std::cerr << "[mapper-debug] read " << processed << " reverse complement search\n";
+#endif
                 search_orientation(index, reverse_complement, config.max_errors, workspace, ref_buffer,
                                    seen_positions, search_results, best_alignments);
             }
 
+#ifdef DEBUG
+            std::cerr << "[mapper-debug] read " << processed << " found " << best_alignments.size() << " alignments\n";
+#endif
             write_record(out, read, best_alignments);
             ++processed;
-            if (processed % 100000ULL == 0ULL) {
+            // Show progress more frequently: 1k, 5k, then every 10k
+            if (processed == 1ULL || processed == 5000ULL || (processed >= 10000ULL && processed % 10000ULL == 0ULL)) {
                 std::cerr << "[mapper] processed " << processed << " reads\n";
             }
         }

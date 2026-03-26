@@ -2,6 +2,11 @@ CXX      = g++
 CXXFLAGS = -O3 -std=c++17 -Wall -Wextra -MMD -MP -Iinclude -march=native
 LDFLAGS  =
 
+# Enable DEBUG mode with: make DEBUG=1
+ifdef DEBUG
+CXXFLAGS += -DDEBUG -g
+endif
+
 SRC_DIR  = src
 OBJ_DIR  = obj
 

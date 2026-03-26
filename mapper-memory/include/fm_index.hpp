@@ -9,38 +9,56 @@
 #include <vector>
 
 #include "bwt.hpp"
-#include "fasta_reader.hpp"
 
 namespace mapper_memory {
 
-class OwnedFMIndex {
-public:
+struct OwnedChromosomeIndex {
+    std::string name;
+    uint64_t length = 0;
     uint64_t text_length = 0;
     uint64_t primary_index = 0;
-    uint32_t occ_sample = 128;
+    uint32_t occ_sample = 256;
     uint32_t sa_sample = 32;
-    std::vector<ChromInfo> chromosomes;
-    std::array<uint32_t, 5> c_array{};
+    std::array<uint64_t, kAlphabetSize> c_array{};
     std::vector<uint8_t> packed_bwt;
-    std::vector<uint32_t> sampled_occ;
+    std::vector<uint32_t> sampled_occ;  // row-major [block][A,C,G,T]
     std::vector<uint32_t> sampled_sa;
     std::vector<uint8_t> packed_genome;
-
-    std::size_t write(const std::string& path) const;
 };
 
-OwnedFMIndex build_fm_index(const std::string& genome,
-                            const std::vector<ChromInfo>& chromosomes,
-                            const BWTData& bwt,
-                            uint32_t occ_sample = 128,
-                            uint32_t sa_sample = 32);
+OwnedChromosomeIndex build_chromosome_index(const std::string& name,
+                                            const std::string& sequence,
+                                            const BWTData& bwt,
+                                            const std::vector<uint32_t>& suffix_array,
+                                            uint32_t occ_sample = 256,
+                                            uint32_t sa_sample = 32);
 
 class FMIndexView {
 public:
-    struct ChromView {
+    struct ChromosomeView {
         std::string_view name;
-        uint64_t offset = 0;
         uint64_t length = 0;
+        uint64_t text_length = 0;
+        uint64_t primary_index = 0;
+        uint32_t occ_sample = 0;
+        uint32_t sa_sample = 0;
+        std::array<uint64_t, kAlphabetSize> c_array{};
+        const uint8_t* packed_bwt = nullptr;
+        std::size_t packed_bwt_bytes = 0;
+        const uint32_t* sampled_occ = nullptr;
+        std::size_t sampled_occ_entries = 0;
+        const uint32_t* sampled_sa = nullptr;
+        std::size_t sampled_sa_entries = 0;
+        const uint8_t* packed_genome = nullptr;
+        std::size_t packed_genome_bytes = 0;
+
+        uint64_t n() const;
+        uint8_t char_rank(uint64_t row) const;
+        uint32_t occ(uint8_t rank, uint64_t pos) const;
+        uint64_t lf(uint64_t row) const;
+        uint64_t locate(uint64_t row) const;
+        bool same_chromosome_window(uint64_t text_pos, uint64_t span) const;
+        void extract_reference(uint64_t text_pos, uint64_t length, std::string& out) const;
     };
 
     FMIndexView();
@@ -54,27 +72,18 @@ public:
 
     void open(const std::string& path);
     void close();
-
     bool is_open() const;
-    uint64_t n() const;
-    uint64_t genome_length() const;
-    uint64_t primary() const;
+
     uint32_t occ_stride() const;
     uint32_t sa_stride() const;
-    const std::array<uint32_t, 5>& c_array() const;
-    const std::vector<ChromView>& chromosomes() const;
+    std::size_t chromosome_count() const;
+    const ChromosomeView& chromosome(std::size_t index) const;
+    const std::vector<ChromosomeView>& chromosomes() const;
 
-    uint8_t char_code(uint64_t row) const;
-    uint32_t occ(uint8_t code, uint64_t pos) const;
-    uint64_t lf(uint64_t row) const;
-    uint64_t sa_value(uint64_t row) const;
-    uint64_t chromosome_index(uint64_t genome_pos) const;
-    bool same_chromosome_window(uint64_t genome_pos, uint64_t span) const;
-    std::string_view chromosome_name(uint64_t chrom_index) const;
-    uint64_t chromosome_offset(uint64_t chrom_index) const;
-    uint64_t chromosome_length(uint64_t chrom_index) const;
-    char reference_base(uint64_t genome_pos) const;
-    void extract_reference(uint64_t genome_pos, uint64_t length, std::string& out) const;
+    static std::size_t write(const std::string& path,
+                             const std::vector<OwnedChromosomeIndex>& chromosomes,
+                             uint32_t occ_sample = 256,
+                             uint32_t sa_sample = 32);
 
 private:
     void parse();
@@ -83,17 +92,9 @@ private:
     int fd_;
     const uint8_t* mapping_;
     std::size_t file_size_;
-
-    uint64_t text_length_;
-    uint64_t primary_index_;
     uint32_t occ_sample_;
     uint32_t sa_sample_;
-    std::array<uint32_t, 5> c_array_values_;
-    const uint8_t* packed_bwt_;
-    const uint32_t* sampled_occ_;
-    const uint32_t* sampled_sa_;
-    const uint8_t* packed_genome_;
-    std::vector<ChromView> chromosomes_;
+    std::vector<ChromosomeView> chromosomes_;
 };
 
 }  // namespace mapper_memory

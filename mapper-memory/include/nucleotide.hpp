@@ -2,6 +2,7 @@
 #define MAPPER_MEMORY_NUCLEOTIDE_HPP
 
 #include <cctype>
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -9,11 +10,13 @@
 
 namespace mapper_memory {
 
-constexpr uint8_t kSentinelCode = 0;
-constexpr uint8_t kACode = 1;
-constexpr uint8_t kCCode = 2;
-constexpr uint8_t kGCode = 3;
-constexpr uint8_t kTCode = 4;
+constexpr uint8_t kSentinelRank = 0;
+constexpr uint8_t kSeparatorRank = 1;
+constexpr uint8_t kARank = 2;
+constexpr uint8_t kCRank = 3;
+constexpr uint8_t kGRank = 4;
+constexpr uint8_t kTRank = 5;
+constexpr uint8_t kAlphabetSize = 6;
 
 inline char normalize_base(char base) {
     switch (std::toupper(static_cast<unsigned char>(base))) {
@@ -32,33 +35,46 @@ inline char normalize_base(char base) {
     }
 }
 
-inline uint8_t encode_base(char base) {
+inline uint8_t rank_from_base(char base) {
     switch (normalize_base(base)) {
         case 'A':
-            return kACode;
+            return kARank;
         case 'C':
-            return kCCode;
+            return kCRank;
         case 'G':
-            return kGCode;
+            return kGRank;
         case 'T':
-            return kTCode;
+            return kTRank;
         default:
-            return kACode;
+            return kARank;
     }
 }
 
-inline char decode_base(uint8_t code) {
-    switch (code) {
-        case kSentinelCode:
-            return '$';
-        case kACode:
+inline uint8_t packed_from_rank(uint8_t rank) {
+    if (rank < kARank || rank > kTRank) {
+        throw std::runtime_error("packed_from_rank received a non-DNA rank");
+    }
+    return static_cast<uint8_t>(rank - kARank);
+}
+
+inline uint8_t rank_from_packed(uint8_t packed) {
+    return static_cast<uint8_t>(packed + kARank);
+}
+
+inline char base_from_rank(uint8_t rank) {
+    switch (rank) {
+        case kARank:
             return 'A';
-        case kCCode:
+        case kCRank:
             return 'C';
-        case kGCode:
+        case kGRank:
             return 'G';
-        case kTCode:
+        case kTRank:
             return 'T';
+        case kSeparatorRank:
+            return '\1';
+        case kSentinelRank:
+            return '\0';
         default:
             return 'A';
     }
@@ -73,40 +89,42 @@ inline std::string normalize_sequence(const std::string& sequence) {
     return out;
 }
 
-inline uint8_t packed_base_from_code(uint8_t code) {
-    if (code < kACode || code > kTCode) {
-        throw std::runtime_error("packed_base_from_code received a non-base code");
-    }
-    return static_cast<uint8_t>(code - 1);
-}
-
-inline uint8_t code_from_packed_base(uint8_t packed) {
-    return static_cast<uint8_t>(packed + 1);
-}
-
 inline std::size_t packed_byte_count(uint64_t symbols) {
     return static_cast<std::size_t>((symbols + 3ULL) / 4ULL);
 }
 
-inline void set_packed_code(std::vector<uint8_t>& packed, uint64_t index, uint8_t code) {
+inline void ensure_packed_capacity(std::vector<uint8_t>& packed, uint64_t symbol_count) {
+    const std::size_t required = packed_byte_count(symbol_count);
+    if (packed.size() < required) {
+        packed.resize(required, 0);
+    }
+}
+
+inline void set_packed_rank(std::vector<uint8_t>& packed, uint64_t index, uint8_t rank) {
+    ensure_packed_capacity(packed, index + 1ULL);
     const std::size_t byte_index = static_cast<std::size_t>(index / 4ULL);
     const uint8_t shift = static_cast<uint8_t>((index % 4ULL) * 2ULL);
-    const uint8_t value = packed_base_from_code(code);
+    const uint8_t value = packed_from_rank(rank);
     packed[byte_index] &= static_cast<uint8_t>(~(0x3u << shift));
     packed[byte_index] |= static_cast<uint8_t>(value << shift);
 }
 
-inline uint8_t get_packed_code(const uint8_t* packed, uint64_t index) {
+inline uint8_t get_packed_rank(const uint8_t* packed, uint64_t index) {
     const std::size_t byte_index = static_cast<std::size_t>(index / 4ULL);
     const uint8_t shift = static_cast<uint8_t>((index % 4ULL) * 2ULL);
     const uint8_t packed_value = static_cast<uint8_t>((packed[byte_index] >> shift) & 0x3u);
-    return code_from_packed_base(packed_value);
+    return rank_from_packed(packed_value);
 }
 
-inline std::vector<uint8_t> pack_sequence(const std::string& sequence) {
-    std::vector<uint8_t> packed(packed_byte_count(sequence.size()), 0);
+inline void append_packed_rank(std::vector<uint8_t>& packed, uint64_t index, uint8_t rank) {
+    set_packed_rank(packed, index, rank);
+}
+
+inline std::vector<uint8_t> pack_bases(const std::string& sequence) {
+    std::vector<uint8_t> packed;
+    packed.reserve(packed_byte_count(sequence.size()));
     for (uint64_t i = 0; i < sequence.size(); ++i) {
-        set_packed_code(packed, i, encode_base(sequence[static_cast<std::size_t>(i)]));
+        append_packed_rank(packed, i, rank_from_base(sequence[static_cast<std::size_t>(i)]));
     }
     return packed;
 }

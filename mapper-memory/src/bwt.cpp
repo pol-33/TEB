@@ -1,24 +1,63 @@
 #include "bwt.hpp"
 
 #include <algorithm>
+#include <cstdint>
 #include <limits>
-#include <sstream>
 #include <stdexcept>
 #include <vector>
-
-#include "nucleotide.hpp"
 
 namespace mapper_memory {
 
 namespace {
 
-std::vector<int> sa_naive(const std::vector<int>& s) {
-    const int n = static_cast<int>(s.size());
-    std::vector<int> sa(n);
-    for (int i = 0; i < n; ++i) {
+constexpr uint32_t kInvalid = std::numeric_limits<uint32_t>::max();
+
+bool is_lms_pos(const std::vector<uint64_t>& bits, uint32_t pos) {
+    if (pos == 0) {
+        return false;
+    }
+    const std::size_t word = static_cast<std::size_t>(pos / 64U);
+    const uint32_t bit = pos % 64U;
+    return ((bits[word] >> bit) & 1ULL) != 0ULL;
+}
+
+std::vector<uint32_t> build_lms_superblocks(const std::vector<uint64_t>& bits) {
+    std::vector<uint32_t> superblocks((bits.size() + 7U) / 8U + 1U, 0U);
+    uint32_t running = 0;
+    for (std::size_t i = 0; i < bits.size(); ++i) {
+        if (i % 8U == 0U) {
+            superblocks[i / 8U] = running;
+        }
+        running += static_cast<uint32_t>(__builtin_popcountll(bits[i]));
+    }
+    superblocks.back() = running;
+    return superblocks;
+}
+
+uint32_t rank_lms(const std::vector<uint64_t>& bits,
+                  const std::vector<uint32_t>& superblocks,
+                  uint32_t pos) {
+    const std::size_t word = static_cast<std::size_t>(pos / 64U);
+    const uint32_t bit = pos % 64U;
+    const std::size_t super = word / 8U;
+    uint32_t count = superblocks[super];
+    for (std::size_t w = super * 8U; w < word; ++w) {
+        count += static_cast<uint32_t>(__builtin_popcountll(bits[w]));
+    }
+    if (bit != 0U) {
+        count += static_cast<uint32_t>(__builtin_popcountll(bits[word] & ((1ULL << bit) - 1ULL)));
+    }
+    return count;
+}
+
+std::vector<uint32_t> sa_naive(const std::vector<uint32_t>& s) {
+    const uint32_t n = static_cast<uint32_t>(s.size());
+    std::vector<uint32_t> sa(n);
+    for (uint32_t i = 0; i < n; ++i) {
         sa[i] = i;
     }
-    std::sort(sa.begin(), sa.end(), [&](int lhs, int rhs) {
+
+    std::sort(sa.begin(), sa.end(), [&](uint32_t lhs, uint32_t rhs) {
         if (lhs == rhs) {
             return false;
         }
@@ -34,33 +73,34 @@ std::vector<int> sa_naive(const std::vector<int>& s) {
     return sa;
 }
 
-std::vector<int> sa_doubling(const std::vector<int>& s) {
-    const int n = static_cast<int>(s.size());
-    std::vector<int> sa(n);
-    std::vector<int> rank = s;
-    std::vector<int> tmp(n, 0);
+std::vector<uint32_t> sa_doubling(const std::vector<uint32_t>& s) {
+    const uint32_t n = static_cast<uint32_t>(s.size());
+    std::vector<uint32_t> sa(n);
+    std::vector<int64_t> rank(n);
+    std::vector<int64_t> tmp(n, 0);
 
-    for (int i = 0; i < n; ++i) {
+    for (uint32_t i = 0; i < n; ++i) {
         sa[i] = i;
+        rank[i] = static_cast<int64_t>(s[i]);
     }
 
-    for (int k = 1;; k <<= 1) {
-        auto cmp = [&](int lhs, int rhs) {
+    for (uint32_t k = 1;; k <<= 1U) {
+        auto cmp = [&](uint32_t lhs, uint32_t rhs) {
             if (rank[lhs] != rank[rhs]) {
                 return rank[lhs] < rank[rhs];
             }
-            const int lhs_next = lhs + k < n ? rank[lhs + k] : -1;
-            const int rhs_next = rhs + k < n ? rank[rhs + k] : -1;
+            const int64_t lhs_next = (lhs + k < n) ? rank[lhs + k] : -1;
+            const int64_t rhs_next = (rhs + k < n) ? rank[rhs + k] : -1;
             return lhs_next < rhs_next;
         };
         std::sort(sa.begin(), sa.end(), cmp);
 
         tmp[sa[0]] = 0;
-        for (int i = 1; i < n; ++i) {
+        for (uint32_t i = 1; i < n; ++i) {
             tmp[sa[i]] = tmp[sa[i - 1]] + (cmp(sa[i - 1], sa[i]) ? 1 : 0);
         }
         rank.swap(tmp);
-        if (rank[sa[n - 1]] == n - 1) {
+        if (rank[sa[n - 1]] == static_cast<int64_t>(n - 1U)) {
             break;
         }
     }
@@ -68,141 +108,132 @@ std::vector<int> sa_doubling(const std::vector<int>& s) {
     return sa;
 }
 
-std::vector<int> sa_is_impl(const std::vector<int>& s, int upper) {
-    const int n = static_cast<int>(s.size());
-    if (n == 0) {
+std::vector<uint32_t> sa_is_impl(const std::vector<uint32_t>& s, uint32_t upper) {
+    const uint32_t n = static_cast<uint32_t>(s.size());
+    if (n == 0U) {
         return {};
     }
-    if (n == 1) {
-        return {0};
+    if (n == 1U) {
+        return {0U};
     }
-    if (n == 2) {
-        if (s[0] < s[1]) {
-            return {0, 1};
-        }
-        return {1, 0};
+    if (n == 2U) {
+        return (s[0] < s[1]) ? std::vector<uint32_t>{0U, 1U} : std::vector<uint32_t>{1U, 0U};
     }
-    if (n < 10) {
+    if (n < 10U) {
         return sa_naive(s);
     }
-    if (n < 40) {
+    if (n < 40U) {
         return sa_doubling(s);
     }
 
-    std::vector<int> sa(n, -1);
-    std::vector<bool> ls(n, false);
-    ls[n - 1] = true;
-    for (int i = n - 2; i >= 0; --i) {
-        if (s[i] == s[i + 1]) {
-            ls[i] = ls[i + 1];
-        } else {
-            ls[i] = s[i] < s[i + 1];
-        }
+    std::vector<uint32_t> sa(n, kInvalid);
+    std::vector<uint8_t> ls(n, 0);
+    ls[n - 1U] = 1U;
+    for (uint64_t i = static_cast<uint64_t>(n) - 1ULL; i-- > 0ULL;) {
+        const uint32_t idx = static_cast<uint32_t>(i);
+        ls[idx] = (s[idx] == s[idx + 1U]) ? ls[idx + 1U] : static_cast<uint8_t>(s[idx] < s[idx + 1U]);
     }
 
-    std::vector<int> sum_l(upper + 2, 0);
-    std::vector<int> sum_s(upper + 2, 0);
-    for (int i = 0; i < n; ++i) {
-        if (!ls[i]) {
+    std::vector<uint64_t> sum_l(static_cast<std::size_t>(upper) + 2U, 0ULL);
+    std::vector<uint64_t> sum_s(static_cast<std::size_t>(upper) + 2U, 0ULL);
+    for (uint32_t i = 0; i < n; ++i) {
+        if (ls[i] == 0U) {
             ++sum_s[s[i]];
         } else {
-            ++sum_l[s[i] + 1];
+            ++sum_l[s[i] + 1U];
         }
     }
-    for (int i = 0; i <= upper + 1; ++i) {
+    for (uint32_t i = 0; i <= upper + 1U; ++i) {
         sum_s[i] += sum_l[i];
-        if (i != upper + 1) {
-            sum_l[i + 1] += sum_s[i];
+        if (i != upper + 1U) {
+            sum_l[i + 1U] += sum_s[i];
         }
     }
 
-    auto induce = [&](const std::vector<int>& lms) {
-        std::fill(sa.begin(), sa.end(), -1);
-        std::vector<int> buf(upper + 2, 0);
+    std::vector<uint64_t> lms_bits((static_cast<uint64_t>(n) + 63ULL) / 64ULL, 0ULL);
+    std::vector<uint32_t> lms;
+    for (uint32_t i = 1; i < n; ++i) {
+        if (ls[i - 1U] == 0U && ls[i] != 0U) {
+            lms.push_back(i);
+            lms_bits[static_cast<std::size_t>(i / 64U)] |= (1ULL << (i % 64U));
+        }
+    }
+    const std::vector<uint32_t> lms_superblocks = build_lms_superblocks(lms_bits);
 
-        std::copy(sum_s.begin(), sum_s.end(), buf.begin());
-        for (int pos : lms) {
-            if (pos == n) {
-                continue;
-            }
-            sa[buf[s[pos]]++] = pos;
+    auto induce = [&](const std::vector<uint32_t>& ordered_lms) {
+        std::fill(sa.begin(), sa.end(), kInvalid);
+        std::vector<uint64_t> buf = sum_s;
+
+        for (uint32_t pos : ordered_lms) {
+            const uint64_t slot = buf[s[pos]]++;
+            sa[static_cast<std::size_t>(slot)] = pos;
         }
 
-        std::copy(sum_l.begin(), sum_l.end(), buf.begin());
-        sa[buf[s[n - 1]]++] = n - 1;
-        for (int i = 0; i < n; ++i) {
-            const int v = sa[i];
-            if (v >= 1 && !ls[v - 1]) {
-                sa[buf[s[v - 1]]++] = v - 1;
+        buf = sum_l;
+        sa[static_cast<std::size_t>(buf[s[n - 1U]]++)] = n - 1U;
+        for (uint32_t i = 0; i < n; ++i) {
+            const uint32_t v = sa[i];
+            if (v != kInvalid && v > 0U && ls[v - 1U] == 0U) {
+                sa[static_cast<std::size_t>(buf[s[v - 1U]]++)] = v - 1U;
             }
         }
 
-        std::copy(sum_l.begin(), sum_l.end(), buf.begin());
-        for (int i = n - 1; i >= 0; --i) {
-            const int v = sa[i];
-            if (v >= 1 && ls[v - 1]) {
-                sa[--buf[s[v - 1] + 1]] = v - 1;
+        buf = sum_l;
+        for (uint64_t i = static_cast<uint64_t>(n); i-- > 0ULL;) {
+            const uint32_t v = sa[static_cast<std::size_t>(i)];
+            if (v != kInvalid && v > 0U && ls[v - 1U] != 0U) {
+                const uint64_t slot = --buf[s[v - 1U] + 1U];
+                sa[static_cast<std::size_t>(slot)] = v - 1U;
             }
         }
     };
 
-    std::vector<int> lms_map(n + 1, -1);
-    int m = 0;
-    for (int i = 1; i < n; ++i) {
-        if (!ls[i - 1] && ls[i]) {
-            lms_map[i] = m++;
-        }
-    }
-
-    std::vector<int> lms;
-    lms.reserve(m);
-    for (int i = 1; i < n; ++i) {
-        if (!ls[i - 1] && ls[i]) {
-            lms.push_back(i);
-        }
-    }
-
     induce(lms);
 
-    if (m > 0) {
-        std::vector<int> sorted_lms;
-        sorted_lms.reserve(m);
-        for (int v : sa) {
-            if (v >= 0 && lms_map[v] != -1) {
+    if (!lms.empty()) {
+        std::vector<uint32_t> sorted_lms;
+        sorted_lms.reserve(lms.size());
+        for (uint32_t v : sa) {
+            if (v != kInvalid && is_lms_pos(lms_bits, v)) {
                 sorted_lms.push_back(v);
             }
         }
 
-        std::vector<int> rec_s(m, 0);
-        int rec_upper = 0;
-        rec_s[lms_map[sorted_lms[0]]] = 0;
+        std::vector<uint32_t> rec_s(lms.size(), 0U);
+        uint32_t rec_upper = 0U;
+        rec_s[rank_lms(lms_bits, lms_superblocks, sorted_lms[0])] = 0U;
 
-        for (int i = 1; i < m; ++i) {
-            int lhs = sorted_lms[i - 1];
-            int rhs = sorted_lms[i];
-            const int lhs_end = (lms_map[lhs] + 1 < m) ? lms[lms_map[lhs] + 1] : n;
-            const int rhs_end = (lms_map[rhs] + 1 < m) ? lms[lms_map[rhs] + 1] : n;
+        for (std::size_t i = 1; i < sorted_lms.size(); ++i) {
+            const uint32_t lhs = sorted_lms[i - 1U];
+            const uint32_t rhs = sorted_lms[i];
+            const uint32_t lhs_idx = rank_lms(lms_bits, lms_superblocks, lhs);
+            const uint32_t rhs_idx = rank_lms(lms_bits, lms_superblocks, rhs);
+            const uint32_t lhs_end = (lhs_idx + 1U < lms.size()) ? lms[lhs_idx + 1U] : n;
+            const uint32_t rhs_end = (rhs_idx + 1U < lms.size()) ? lms[rhs_idx + 1U] : n;
 
             bool same = (lhs_end - lhs) == (rhs_end - rhs);
-            while (same && lhs < lhs_end) {
-                if (s[lhs] != s[rhs] || ls[lhs] != ls[rhs]) {
+            uint32_t l = lhs;
+            uint32_t r = rhs;
+            while (same && l < lhs_end) {
+                if (s[l] != s[r] || ls[l] != ls[r]) {
                     same = false;
                     break;
                 }
-                ++lhs;
-                ++rhs;
+                ++l;
+                ++r;
             }
             if (!same) {
                 ++rec_upper;
             }
-            rec_s[lms_map[sorted_lms[i]]] = rec_upper;
+            rec_s[rhs_idx] = rec_upper;
         }
 
-        std::vector<int> rec_sa = sa_is_impl(rec_s, rec_upper);
-        for (int i = 0; i < m; ++i) {
-            sorted_lms[i] = lms[rec_sa[i]];
+        const std::vector<uint32_t> rec_sa = sa_is_impl(rec_s, rec_upper);
+        std::vector<uint32_t> ordered_lms(lms.size());
+        for (std::size_t i = 0; i < rec_sa.size(); ++i) {
+            ordered_lms[i] = lms[rec_sa[i]];
         }
-        induce(sorted_lms);
+        induce(ordered_lms);
     }
 
     return sa;
@@ -210,52 +241,43 @@ std::vector<int> sa_is_impl(const std::vector<int>& s, int upper) {
 
 }  // namespace
 
-std::vector<uint32_t> build_suffix_array_sais(const std::string& genome) {
-    if (genome.size() + 1ULL > static_cast<uint64_t>(std::numeric_limits<int>::max())) {
-        std::ostringstream oss;
-        oss << "reference length " << genome.size()
-            << " exceeds the current in-memory SA-IS implementation limit of "
-            << std::numeric_limits<int>::max()
-            << " symbols; this builder uses signed 32-bit indices internally and is not yet suitable for GRCh38-scale indexing";
-        throw std::runtime_error(oss.str());
+std::vector<uint32_t> build_suffix_array_sais(const std::vector<uint8_t>& text) {
+    if (text.empty()) {
+        return {};
     }
-
-    std::vector<int> text;
-    text.reserve(genome.size() + 1);
-    for (char base : genome) {
-        text.push_back(static_cast<int>(encode_base(base)));
+    std::vector<uint32_t> symbols(text.size(), 0U);
+    for (std::size_t i = 0; i < text.size(); ++i) {
+        symbols[i] = text[i];
     }
-    text.push_back(static_cast<int>(kSentinelCode));
-
-    const std::vector<int> sa = sa_is_impl(text, 4);
-    std::vector<uint32_t> out;
-    out.reserve(sa.size());
-    for (int value : sa) {
-        out.push_back(static_cast<uint32_t>(value));
-    }
-    return out;
+    return sa_is_impl(symbols, static_cast<uint32_t>(kAlphabetSize - 1U));
 }
 
-BWTData build_bwt(const std::string& genome, const std::vector<uint32_t>& suffix_array) {
-    const uint64_t text_length = static_cast<uint64_t>(genome.size()) + 1ULL;
-    if (suffix_array.size() != text_length) {
-        throw std::runtime_error("suffix array length does not match genome length + sentinel");
+BWTData build_bwt(const std::vector<uint8_t>& text, const std::vector<uint32_t>& suffix_array) {
+    const uint64_t n = static_cast<uint64_t>(text.size());
+    if (static_cast<uint64_t>(suffix_array.size()) != n) {
+        throw std::runtime_error("suffix array length does not match text length");
     }
 
     BWTData data;
-    data.text_length = text_length;
-    data.suffix_array = suffix_array;
-    data.packed_bwt.assign(packed_byte_count(text_length), 0);
+    data.text_length = n;
+    data.packed_bwt.assign(packed_byte_count(n), 0);
 
-    for (uint64_t i = 0; i < text_length; ++i) {
-        const uint32_t sa_value = suffix_array[static_cast<std::size_t>(i)];
-        if (sa_value == 0) {
-            data.primary_index = i;
-            set_packed_code(data.packed_bwt, i, kACode);
-            continue;
+    for (uint64_t row = 0; row < n; ++row) {
+        const uint32_t sa_value = suffix_array[static_cast<std::size_t>(row)];
+        const uint8_t prev_rank = (sa_value == 0U)
+            ? text.back()
+            : text[static_cast<std::size_t>(sa_value - 1U)];
+        ++data.counts[prev_rank];
+
+        if (prev_rank == kSentinelRank) {
+            data.primary_index = row;
+            set_packed_rank(data.packed_bwt, row, kARank);
+        } else if (prev_rank == kSeparatorRank) {
+            data.separator_rows.push_back(static_cast<uint32_t>(row));
+            set_packed_rank(data.packed_bwt, row, kARank);
+        } else {
+            set_packed_rank(data.packed_bwt, row, prev_rank);
         }
-        const uint64_t prev_pos = static_cast<uint64_t>(sa_value - 1);
-        set_packed_code(data.packed_bwt, i, encode_base(genome[static_cast<std::size_t>(prev_pos)]));
     }
 
     return data;

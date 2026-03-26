@@ -15,8 +15,12 @@ mapper
 
 *.idx
 *.sam
+*.fmidx
 
 *.fa.*
 
 test
 bench-results
+*bench-*
+
+.DS_Store

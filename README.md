@@ -2,7 +2,7 @@
 
 This repository now contains two mapper variants for the TEB competitive bioinformatics project:
 
-- `mapper-memory/`: a low-memory seed-index mapper tuned for lower peak RSS during mapping
+- `mapper-memory/`: a low-memory FM-index mapper tuned for lower peak RSS during mapping
 - `mapper-speed/`: a future minimizer/hash mapper reserved for the speed-focused track
 
 The original FASTA/FASTQ parser coursework has been preserved under `legacy/`.
@@ -48,14 +48,14 @@ Build the memory mapper index:
 
 ```bash
 cd mapper-memory
-./indexer -R /path/to/genome.fa -I /path/to/genome.seed.idx
+./indexer -R /path/to/genome.fa -I /path/to/genome.fmidx
 ```
 
 Map reads with the serialized index:
 
 ```bash
 cd mapper-memory
-./mapper -I /path/to/genome.seed.idx -i /path/to/reads_1M.fastq -o /path/to/output.sam -k 1
+./mapper -I /path/to/genome.fmidx -i /path/to/reads_1M.fastq -o /path/to/output.sam -k 1
 ```
 
 Output format:

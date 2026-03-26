@@ -1,11 +1,11 @@
 # mapper-memory
 
-`mapper-memory` is the memory-oriented mapper implementation for the TEB sequence-mapper project.
+`mapper-memory` is the memory-contest mapper for the TEB sequence-mapper project.
 
 ## What It Builds
 
-- `indexer`: builds a serialized low-memory seed index from a reference FASTA
-- `mapper`: maps FASTQ reads against the serialized seed index via `mmap`
+- `indexer`: builds a serialized FM-index from a reference FASTA
+- `mapper`: maps FASTQ reads against the memory-mapped FM-index
 
 ## Build
 
@@ -13,36 +13,65 @@
 make
 ```
 
-## Commands
+Run the tiny smoke test:
 
 ```bash
-./indexer -R /path/to/genome.fa -I /path/to/genome.seed.idx
-./mapper  -I /path/to/genome.seed.idx -i /path/to/reads.fastq -o /path/to/output.sam -k 1
+make test
 ```
 
-`-I` mode is the intended competition workflow. The contest-scale mapper currently requires a prebuilt index.
-
-## Benchmarking
-
-Use the bundled benchmark harness to run a timed mapper job, validate the simplified SAM-like output, and optionally compare a smaller subset against `bwa mem`:
+Run the benchmark harness:
 
 ```bash
 ./bench.sh
 ```
 
-Useful overrides:
+The harness auto-detects whether `/usr/bin/time -l` is available. On restricted macOS environments it falls back to `/usr/bin/time -p` and uses the mapper/indexer peak-RSS report from stderr.
+
+## Commands
 
 ```bash
-BUILD_INDEX_IF_MISSING=1 BENCH_READS=10000 CORRECTNESS_READS=500 ./bench.sh
-INDEX=./bench-results/genome.seed.idx BENCH_READS=500 RUN_BWA_CHECK=0 ./bench.sh
-BUILD_BWA_INDEX_IF_MISSING=1 ./bench.sh
+./indexer -R /path/to/genome.fa -I /path/to/genome.fmidx
+./mapper  -I /path/to/genome.fmidx -i /path/to/reads.fastq -o /path/to/output.sam -k 1
 ```
 
-By default the script avoids surprise multi-hour setup work: it will reuse an existing seed index, and it will only build the seed index or the `bwa` index automatically when the corresponding `*_IF_MISSING=1` flag is set.
+The contest-scale mapper currently requires a prebuilt index. Reads are streamed one record at a time, and the output format is:
+
+```text
+read_name chrom pos_1based cigar seq qual [ALT:chrom,pos,cigar]
+```
+
+Unmapped reads are emitted as:
+
+```text
+read_name * 0 * seq qual
+```
 
 ## Implementation Notes
 
-- FASTA input is flattened into a contiguous genome plus chromosome metadata.
-- The on-disk index stores a packed 2-bit reference plus a direct-address seed table for 13-mers.
-- Index construction uses bounded partitioned writes so GRCh38 can be indexed without the old suffix-array memory failure.
-- The mapper streams FASTQ records, searches both forward and reverse-complement orientations, verifies candidates with banded edit-distance DP, and writes up to two alignments per read in the simplified SAM-like contest format.
+- The indexer builds one native FM-index segment per chromosome, which keeps suffix-array construction bounded by chromosome size instead of the full reference size.
+- Each chromosome stores its own packed BWT, Occ checkpoints, sampled SA, and packed reference sequence inside one mmap-friendly index file.
+- The mapper uses exact backward search first, then bounded inexact FM backtracking for `k <= 3`.
+- Candidate locations are verified with the reusable banded edit-distance aligner and written as the best two simplified SAM-like hits.
+- The mapper searches both forward and reverse-complement orientations.
+
+## Memory Analysis
+
+Projected GRCh38 FM-index footprint:
+
+| Component | Size (GRCh38) | RSS contribution (mmap) |
+| --- | ---: | ---: |
+| Packed BWT (2b/base) | ~0.775 GB | ~0.2-0.5 GB |
+| Occ checkpoints (256 stride) | ~0.193 GB | ~0.1-0.2 GB |
+| Sampled SA (1/32) | ~0.387 GB | ~0.1-0.2 GB |
+| Packed genome | ~0.775 GB | ~0.05-0.2 GB |
+| Total index on disk | ~2.13 GB | ~0.5-1.1 GB peak RSS (estimated) |
+
+Comparison with the old seed-index approach:
+
+| Component | Size |
+| --- | ---: |
+| Positions array | ~12.4 GB |
+| Bucket offsets | ~0.27 GB |
+| Total | ~13.4 GB |
+
+The FM-index wins the memory contest because the mapper touches only the BWT, Occ checkpoints, sampled SA, and small reference windows through `mmap`, instead of paging in explicit position lists for nearly every seed in the genome.

@@ -2,7 +2,7 @@
 # Watch mapper progress in real-time
 # Usage: ./watch-progress.sh [logfile]
 
-LOGFILE="${1:-./bench-final/mapper.stderr.log}"
+LOGFILE="${1:-./benchmark-dataset-complet/mapper.stderr.log}"
 
 if [[ ! -f "$LOGFILE" ]]; then
     echo "Log file not found: $LOGFILE"

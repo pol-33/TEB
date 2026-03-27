@@ -14,6 +14,7 @@ BENCH_READS="${BENCH_READS:-1000}"
 CORRECTNESS_READS="${CORRECTNESS_READS:-250}"
 BUILD_INDEX_IF_MISSING="${BUILD_INDEX_IF_MISSING:-0}"
 TIME_STYLE="${TIME_STYLE:-auto}"
+BWA_THREADS="${BWA_THREADS:-8}"
 
 mkdir -p "$OUT_DIR"
 
@@ -617,15 +618,39 @@ extract_subset "$READS" "$CORRECTNESS_READS" "$CORRECTNESS_FASTQ"
 CORRECTNESS_COUNT="$(count_reads "$CORRECTNESS_FASTQ")"
 
 MAPPER_CORRECTNESS_OUTPUT="$OUT_DIR/correctness.mapper.sam"
-log "running mapper correctness subset ($CORRECTNESS_COUNT reads)"
-"$ROOT_DIR/mapper" -I "$INDEX" -i "$CORRECTNESS_FASTQ" -o "$MAPPER_CORRECTNESS_OUTPUT" -k "$K" > /dev/null
-validate_mapper_output "$MAPPER_CORRECTNESS_OUTPUT" "$CHROM_SIZES" "$CORRECTNESS_COUNT" "$OUT_DIR/correctness.validation"
+if [[ "$BENCH_READS" -eq "$CORRECTNESS_READS" ]]; then
+  log "reusing benchmark mapper output for correctness (same read count: $CORRECTNESS_COUNT)"
+  cp "$MAP_OUTPUT" "$MAPPER_CORRECTNESS_OUTPUT"
+  cp "$OUT_DIR/mapper.validation" "$OUT_DIR/correctness.validation"
+else
+  log "running mapper correctness subset ($CORRECTNESS_COUNT reads)"
+  "$ROOT_DIR/mapper" -I "$INDEX" -i "$CORRECTNESS_FASTQ" -o "$MAPPER_CORRECTNESS_OUTPUT" -k "$K" > /dev/null
+  validate_mapper_output "$MAPPER_CORRECTNESS_OUTPUT" "$CHROM_SIZES" "$CORRECTNESS_COUNT" "$OUT_DIR/correctness.validation"
+fi
 
 BWA_SAM="$OUT_DIR/correctness.bwa.sam"
 BWA_STDERR="$OUT_DIR/correctness.bwa.stderr.log"
 BWA_TIME="$OUT_DIR/correctness.bwa.time.log"
-run_with_time "bwa mem" "$BWA_SAM" "$BWA_STDERR" "$BWA_TIME" bwa mem "$REF" "$CORRECTNESS_FASTQ"
+run_with_time "bwa mem" "$BWA_SAM" "$BWA_STDERR" "$BWA_TIME" bwa mem -t "$BWA_THREADS" "$REF" "$CORRECTNESS_FASTQ"
 parse_time_report "$BWA_TIME" > "$OUT_DIR/correctness.bwa.metrics"
+if [[ "$RESOLVED_TIME_STYLE" != "full" ]]; then
+  bwa_peak_rss="$(parse_peak_rss_from_stderr "$BWA_STDERR")"
+  awk -v rss_override="$bwa_peak_rss" '
+    BEGIN { updated = 0 }
+    /^rss=/ {
+      print "rss=" rss_override;
+      updated = 1;
+      next;
+    }
+    { print }
+    END {
+      if (!updated) {
+        print "rss=" rss_override;
+      }
+    }
+  ' "$OUT_DIR/correctness.bwa.metrics" > "$OUT_DIR/correctness.bwa.metrics.tmp"
+  mv "$OUT_DIR/correctness.bwa.metrics.tmp" "$OUT_DIR/correctness.bwa.metrics"
+fi
 
 MAPPER_TSV="$OUT_DIR/correctness.mapper.tsv"
 BWA_TSV="$OUT_DIR/correctness.bwa.tsv"
@@ -633,7 +658,27 @@ convert_mapper_output "$MAPPER_CORRECTNESS_OUTPUT" "$MAPPER_TSV"
 convert_bwa_output "$BWA_SAM" "$BWA_TSV" "$K"
 compare_against_bwa "$MAPPER_TSV" "$BWA_TSV" "$OUT_DIR/correctness.compare"
 
+source "$OUT_DIR/correctness.bwa.metrics"
+bwa_real="$real"
+bwa_user="$user"
+bwa_sys="$sys"
+bwa_rss="$rss"
+bwa_pf="$pf"
+bwa_instr="$instr"
+bwa_cycles="$cycles"
+
 {
+  echo
+  echo "BWA mem Metrics (Correctness Subset)"
+  echo "-------------------------------------"
+  echo "real_seconds: $bwa_real"
+  echo "user_seconds: $bwa_user"
+  echo "sys_seconds: $bwa_sys"
+  echo "peak_rss_bytes: $bwa_rss"
+  echo "page_faults: $bwa_pf"
+  echo "instructions: $bwa_instr"
+  echo "cycles: $bwa_cycles"
+  awk -v reads="$CORRECTNESS_COUNT" -v real="$bwa_real" 'BEGIN { if (real > 0) printf "reads_per_second: %.2f\n", reads / real; else print "reads_per_second: 0" }'
   echo
   echo "Correctness Against bwa mem"
   echo "---------------------------"

@@ -1,0 +1,50 @@
+Benchmark Summary
+=================
+reference: /Users/polplana/Documents/Universitat/TEB/teb/data/genome.fa
+reads: /Users/polplana/Documents/Universitat/TEB/teb/data/reads_1M.fastq
+bench_reads: 1000000
+index: ./genome.fmidx
+k: 1
+timing_backend: full
+
+Mapping Metrics
+---------------
+real_seconds: 6320.11
+user_seconds: 48369.03
+sys_seconds: 78.67
+peak_rss_bytes: 1884536832
+page_faults: 115826
+instructions: 638110504392754
+cycles: 132549392784115
+reads_per_second: 158.23
+
+Output Validation
+-----------------
+mapped: 844885
+unmapped: 155115
+with_alt: 300090
+
+BWA mem Metrics (Correctness Subset)
+-------------------------------------
+real_seconds: 67.10
+user_seconds: 402.09
+sys_seconds: 40.18
+peak_rss_bytes: 6880624640
+page_faults: 20
+instructions: 2959330890320
+cycles: 1249354549112
+reads_per_second: 14903.13
+
+Correctness Against bwa mem
+---------------------------
+subset_reads=1000000
+mapper_mapped=844885
+bwa_mapped=843431
+shared_mapped=843431
+chrom_match=803843
+within_10bp=604586
+within_50bp=604622
+exact_pos=602380
+exact_cigar=796209
+mapper_only=1454
+bwa_only=0

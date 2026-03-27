@@ -2,7 +2,7 @@
 # Tail the progress log to see updates in real-time
 # Usage: ./tail-progress.sh [logfile]
 
-LOGFILE="${1:-./bench-final/mapper.stderr.log}"
+LOGFILE="${1:-./benchmark-dataset-complet/mapper.stderr.log}"
 
 if [[ ! -f "$LOGFILE" ]]; then
     echo "Waiting for log file to appear: $LOGFILE"

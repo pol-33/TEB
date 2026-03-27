@@ -1,0 +1,18 @@
+       67.10 real       402.09 user        40.18 sys
+          6880624640  maximum resident set size
+                   0  average shared memory size
+                   0  average unshared data size
+                   0  average unshared stack size
+             4074882  page reclaims
+                  20  page faults
+                   0  swaps
+                   0  block input operations
+                   0  block output operations
+                   0  messages sent
+                   0  messages received
+                   0  signals received
+                8926  voluntary context switches
+             1273329  involuntary context switches
+       2959330890320  instructions retired
+       1249354549112  cycles elapsed
+         10790526720  peak memory footprint

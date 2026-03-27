@@ -8,6 +8,11 @@
 #include <string>
 #include <unordered_set>
 #include <vector>
+#include <thread>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 #include "alignment.hpp"
 #include "fastq_reader.hpp"
@@ -16,6 +21,9 @@
 #include "memory_stats.hpp"
 #include "nucleotide.hpp"
 
+// Batch size for parallel processing - tune for cache efficiency
+constexpr std::size_t BATCH_SIZE = 1024;
+
 namespace {
 
 struct Config {
@@ -23,12 +31,35 @@ struct Config {
     std::string reads_path;
     std::string output_path;
     int max_errors = 0;
+    int num_threads = 0;  // 0 = auto-detect
 };
 
 struct VerifiedAlignment {
     mapper_memory::Alignment alignment;
     std::size_t chrom_index = 0;
     uint64_t text_pos = 0;
+};
+
+// Thread-local workspace to avoid heap allocations per read
+struct ThreadWorkspace {
+    mapper_memory::AlignmentWorkspace align_workspace;
+    std::vector<mapper_memory::SearchResult> search_results;
+    std::vector<VerifiedAlignment> best_alignments;
+    std::unordered_set<uint64_t> seen_positions;
+    std::string ref_buffer;
+    std::string normalized;
+    std::string reverse_complement;
+    
+    ThreadWorkspace() {
+        search_results.reserve(64);
+        best_alignments.reserve(2);
+        seen_positions.reserve(1024);
+    }
+};
+
+// Result for a single read - pre-formatted string to avoid locks during output
+struct ReadResult {
+    std::string output_line;
 };
 
 Config parse_args(int argc, char* argv[]) {
@@ -43,15 +74,17 @@ Config parse_args(int argc, char* argv[]) {
             config.output_path = argv[++i];
         } else if (arg == "-k" && i + 1 < argc) {
             config.max_errors = std::stoi(argv[++i]);
+        } else if (arg == "-t" && i + 1 < argc) {
+            config.num_threads = std::stoi(argv[++i]);
         } else if (arg == "-R") {
             throw std::runtime_error("direct -R mode is disabled for the contest-scale mapper; build an FM-index first");
         } else {
-            throw std::runtime_error("usage: mapper -I genome.idx -i reads.fastq -o output.sam -k <0..3>");
+            throw std::runtime_error("usage: mapper -I genome.idx -i reads.fastq -o output.sam -k <0..3> [-t threads]");
         }
     }
     if (config.index_path.empty() || config.reads_path.empty() || config.output_path.empty() ||
         config.max_errors < 0 || config.max_errors > 3) {
-        throw std::runtime_error("usage: mapper -I genome.idx -i reads.fastq -o output.sam -k <0..3>");
+        throw std::runtime_error("usage: mapper -I genome.idx -i reads.fastq -o output.sam -k <0..3> [-t threads]");
     }
     return config;
 }
@@ -101,22 +134,9 @@ void maybe_push_alignment(std::vector<VerifiedAlignment>& best,
     }
 }
 
-char complement_base(char base) {
-    switch (base) {
-        case 'A': return 'T';
-        case 'C': return 'G';
-        case 'G': return 'C';
-        case 'T': return 'A';
-        default: return 'A';
-    }
-}
-
+// Use fast lookup-based complement
 std::string reverse_complement_sequence(const std::string& normalized) {
-    std::string out(normalized.size(), 'A');
-    for (std::size_t i = 0; i < normalized.size(); ++i) {
-        out[i] = complement_base(normalized[normalized.size() - 1U - i]);
-    }
-    return out;
+    return mapper_memory::reverse_complement_fast(normalized);
 }
 
 mapper_memory::Alignment verify_candidate(const mapper_memory::FMIndexView::ChromosomeView& chrom,
@@ -191,24 +211,11 @@ void search_orientation(const mapper_memory::FMIndexView& index,
         const auto& chrom = index.chromosome(chrom_index);
         search_results.clear();
 
-#ifdef DEBUG
-        std::cerr << "[mapper-debug] searching chromosome " << chrom_index << "/" << index.chromosome_count() << "\n";
-#endif
-
         const mapper_memory::SAInterval exact = mapper_memory::exact_search(chrom, normalized_read);
         if (exact.lo < exact.hi) {
             search_results.push_back(mapper_memory::SearchResult{exact.lo, exact.hi, 0});
-#ifdef DEBUG
-            std::cerr << "[mapper-debug] exact match found: SA[" << exact.lo << "," << exact.hi << ")\n";
-#endif
         } else if (max_errors > 0) {
-#ifdef DEBUG
-            std::cerr << "[mapper-debug] no exact match, starting inexact search\n";
-#endif
             mapper_memory::inexact_search(chrom, normalized_read, max_errors, search_results, 32U);
-#ifdef DEBUG
-            std::cerr << "[mapper-debug] inexact search found " << search_results.size() << " results\n";
-#endif
         }
         if (search_results.empty()) {
             continue;
@@ -228,21 +235,46 @@ void search_orientation(const mapper_memory::FMIndexView& index,
     }
 }
 
-void write_record(std::ofstream& out,
-                  const mapper_memory::Read& read,
-                  const std::vector<VerifiedAlignment>& alignments) {
+// Thread-safe version that returns a string
+std::string format_record(const mapper_memory::Read& read,
+                          const std::vector<VerifiedAlignment>& alignments) {
+    std::string result;
+    result.reserve(512);
+    
     if (alignments.empty()) {
-        out << read.name << " * 0 * " << read.seq << ' ' << read.qual << '\n';
-        return;
+        result += read.name;
+        result += " * 0 * ";
+        result += read.seq;
+        result += ' ';
+        result += read.qual;
+        result += '\n';
+        return result;
     }
+    
     const mapper_memory::Alignment& primary = alignments.front().alignment;
-    out << read.name << ' ' << primary.chrom << ' ' << primary.ref_pos << ' ' << primary.cigar
-        << ' ' << read.seq << ' ' << read.qual;
+    result += read.name;
+    result += ' ';
+    result += primary.chrom;
+    result += ' ';
+    result += std::to_string(primary.ref_pos);
+    result += ' ';
+    result += primary.cigar;
+    result += ' ';
+    result += read.seq;
+    result += ' ';
+    result += read.qual;
+    
     if (alignments.size() > 1U) {
         const mapper_memory::Alignment& alt = alignments[1].alignment;
-        out << " ALT:" << alt.chrom << ',' << alt.ref_pos << ',' << alt.cigar;
+        result += " ALT:";
+        result += alt.chrom;
+        result += ',';
+        result += std::to_string(alt.ref_pos);
+        result += ',';
+        result += alt.cigar;
     }
-    out << '\n';
+    result += '\n';
+    return result;
 }
 
 void report_peak_rss() {
@@ -251,12 +283,50 @@ void report_peak_rss() {
               << " MiB, peak RSS: " << mapper_memory::bytes_to_mebibytes(stats.peak_rss_bytes) << " MiB\n";
 }
 
+// Process a single read using thread-local workspace
+std::string process_read(const mapper_memory::FMIndexView& index,
+                         const mapper_memory::Read& read,
+                         int max_errors,
+                         ThreadWorkspace& ws) {
+    ws.normalized = mapper_memory::normalize_sequence(read.seq);
+    ws.best_alignments.clear();
+    ws.seen_positions.clear();
+
+    search_orientation(index, ws.normalized, max_errors, ws.align_workspace, ws.ref_buffer,
+                       ws.seen_positions, ws.search_results, ws.best_alignments);
+
+    ws.reverse_complement = reverse_complement_sequence(ws.normalized);
+    if (ws.reverse_complement != ws.normalized || ws.best_alignments.empty()) {
+        search_orientation(index, ws.reverse_complement, max_errors, ws.align_workspace, ws.ref_buffer,
+                           ws.seen_positions, ws.search_results, ws.best_alignments);
+    }
+
+    return format_record(read, ws.best_alignments);
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
     try {
         std::ios::sync_with_stdio(false);
         const Config config = parse_args(argc, argv);
+
+        // Determine number of threads
+        int num_threads = config.num_threads;
+        if (num_threads <= 0) {
+            num_threads = static_cast<int>(std::thread::hardware_concurrency());
+            if (num_threads <= 0) num_threads = 1;
+        }
+
+#ifdef _OPENMP
+        omp_set_num_threads(num_threads);
+        std::cerr << "[mapper] using " << num_threads << " threads (OpenMP)\n";
+#else
+        if (num_threads > 1) {
+            std::cerr << "[mapper] warning: compiled without OpenMP, using 1 thread\n";
+        }
+        num_threads = 1;
+#endif
 
         std::cerr << "[mapper] loading FM-index from " << config.index_path << "\n";
         mapper_memory::FMIndexView index(config.index_path);
@@ -272,52 +342,56 @@ int main(int argc, char* argv[]) {
         out.rdbuf()->pubsetbuf(output_buffer.data(), static_cast<std::streamsize>(output_buffer.size()));
 
         std::cerr << "[mapper] starting read processing with k=" << config.max_errors << "\n";
-        
-        mapper_memory::AlignmentWorkspace workspace;
-        mapper_memory::Read read;
-        std::vector<mapper_memory::SearchResult> search_results;
-        search_results.reserve(64);
-        std::vector<VerifiedAlignment> best_alignments;
-        best_alignments.reserve(2);
-        std::unordered_set<uint64_t> seen_positions;
-        seen_positions.reserve(1024);
-        std::string ref_buffer;
-        std::string normalized;
-        std::string reverse_complement;
+
+        // Create thread-local workspaces (minimal additional memory)
+        std::vector<ThreadWorkspace> workspaces(static_cast<std::size_t>(num_threads));
+
+        // Batch storage
+        std::vector<mapper_memory::Read> batch_reads;
+        std::vector<std::string> batch_results;
+        batch_reads.reserve(BATCH_SIZE);
+        batch_results.resize(BATCH_SIZE);
 
         uint64_t processed = 0;
-        while (reader.next(read)) {
-#ifdef DEBUG
-            if (processed % 1000ULL == 0ULL) {
-                std::cerr << "[mapper] processing read " << processed << ": " << read.name << "\n";
+        mapper_memory::Read read;
+
+        while (true) {
+            // Read a batch (sequential - fast I/O)
+            batch_reads.clear();
+            while (batch_reads.size() < BATCH_SIZE && reader.next(read)) {
+                batch_reads.push_back(read);
             }
-#endif
-            normalized = mapper_memory::normalize_sequence(read.seq);
-            best_alignments.clear();
-            seen_positions.clear();
-
-#ifdef DEBUG
-            std::cerr << "[mapper-debug] read " << processed << " forward search\n";
-#endif
-            search_orientation(index, normalized, config.max_errors, workspace, ref_buffer,
-                               seen_positions, search_results, best_alignments);
-
-            reverse_complement = reverse_complement_sequence(normalized);
-            if (reverse_complement != normalized || best_alignments.empty()) {
-#ifdef DEBUG
-                std::cerr << "[mapper-debug] read " << processed << " reverse complement search\n";
-#endif
-                search_orientation(index, reverse_complement, config.max_errors, workspace, ref_buffer,
-                                   seen_positions, search_results, best_alignments);
+            
+            if (batch_reads.empty()) {
+                break;
             }
 
-#ifdef DEBUG
-            std::cerr << "[mapper-debug] read " << processed << " found " << best_alignments.size() << " alignments\n";
+            const std::size_t batch_size = batch_reads.size();
+            batch_results.resize(batch_size);
+
+            // Process batch in parallel
+#ifdef _OPENMP
+            #pragma omp parallel for schedule(dynamic, 16)
 #endif
-            write_record(out, read, best_alignments);
-            ++processed;
-            // Show progress more frequently: 1k, 5k, then every 10k
-            if (processed == 1ULL || processed == 5000ULL || (processed >= 10000ULL && processed % 10000ULL == 0ULL)) {
+            for (std::size_t i = 0; i < batch_size; ++i) {
+#ifdef _OPENMP
+                const int tid = omp_get_thread_num();
+#else
+                const int tid = 0;
+#endif
+                batch_results[i] = process_read(index, batch_reads[i], config.max_errors, 
+                                                 workspaces[static_cast<std::size_t>(tid)]);
+            }
+
+            // Write results in order (sequential - maintains ordering)
+            for (std::size_t i = 0; i < batch_size; ++i) {
+                out << batch_results[i];
+            }
+
+            processed += batch_size;
+
+            // Progress reporting - show after first batch, then at milestones
+            if (processed <= BATCH_SIZE || processed % 10000ULL < BATCH_SIZE) {
                 std::cerr << "[mapper] processed " << processed << " reads\n";
             }
         }

@@ -15,7 +15,20 @@ namespace {
 struct Config {
     std::string reference_path;
     std::string index_path;
+    int opt_level = 0;  // Optimization level 0-5
 };
+
+void print_usage() {
+    std::cerr << "Usage: indexer -R genome.fa -I genome.idx [-L level]\n"
+              << "\n"
+              << "Optimization levels:\n"
+              << "  0 (baseline): occ=256, sa=32, genome=yes  (largest, fastest)\n"
+              << "  1 (no-genome): occ=256, sa=32, genome=no  (no packed genome)\n"
+              << "  2 (sparse-sa): occ=256, sa=128, genome=no (sparser SA)\n"
+              << "  3 (very-sparse): occ=512, sa=256, genome=no (very sparse)\n"
+              << "  4 (ultra-sparse): occ=1024, sa=512, genome=no (ultra sparse)\n"
+              << "  5 (extreme): occ=2048, sa=1024, genome=no (extreme sparse, slowest)\n";
+}
 
 Config parse_args(int argc, char* argv[]) {
     Config config;
@@ -25,14 +38,36 @@ Config parse_args(int argc, char* argv[]) {
             config.reference_path = argv[++i];
         } else if (arg == "-I" && i + 1 < argc) {
             config.index_path = argv[++i];
+        } else if (arg == "-L" && i + 1 < argc) {
+            config.opt_level = std::stoi(argv[++i]);
+            if (config.opt_level < 0 || config.opt_level > 5) {
+                throw std::runtime_error("optimization level must be 0-5");
+            }
+        } else if (arg == "-h" || arg == "--help") {
+            print_usage();
+            std::exit(0);
         } else {
-            throw std::runtime_error("usage: indexer -R genome.fa -I genome.idx");
+            print_usage();
+            throw std::runtime_error("unknown argument: " + arg);
         }
     }
     if (config.reference_path.empty() || config.index_path.empty()) {
-        throw std::runtime_error("usage: indexer -R genome.fa -I genome.idx");
+        print_usage();
+        throw std::runtime_error("missing required arguments");
     }
     return config;
+}
+
+mapper_memory::IndexConfig get_index_config(int level) {
+    switch (level) {
+        case 0: return mapper_memory::IndexConfig::baseline();
+        case 1: return mapper_memory::IndexConfig::level1_no_genome();
+        case 2: return mapper_memory::IndexConfig::level2_sparse_sa();
+        case 3: return mapper_memory::IndexConfig::level3_very_sparse();
+        case 4: return mapper_memory::IndexConfig::level4_ultra_sparse();
+        case 5: return mapper_memory::IndexConfig::level5_extreme();
+        default: return mapper_memory::IndexConfig::baseline();
+    }
 }
 
 std::vector<uint8_t> sequence_to_text(const std::string& sequence) {
@@ -50,6 +85,13 @@ std::vector<uint8_t> sequence_to_text(const std::string& sequence) {
 int main(int argc, char* argv[]) {
     try {
         const Config config = parse_args(argc, argv);
+        const mapper_memory::IndexConfig idx_config = get_index_config(config.opt_level);
+
+        std::cerr << "[indexer] optimization level " << config.opt_level << ": "
+                  << "occ_sample=" << idx_config.occ_sample
+                  << ", sa_sample=" << idx_config.sa_sample
+                  << ", store_genome=" << (idx_config.store_genome ? "yes" : "no")
+                  << "\n";
 
         mapper_memory::FastaReader reader(config.reference_path);
         mapper_memory::FastaChromosome chrom;
@@ -65,7 +107,7 @@ int main(int argc, char* argv[]) {
             std::vector<uint32_t> suffix_array = mapper_memory::build_suffix_array_sais(text);
             const mapper_memory::BWTData bwt = mapper_memory::build_bwt(text, suffix_array);
             chromosomes.push_back(
-                mapper_memory::build_chromosome_index(chrom.name, chrom.sequence, bwt, suffix_array, 256U, 32U));
+                mapper_memory::build_chromosome_index(chrom.name, chrom.sequence, bwt, suffix_array, idx_config));
 
             suffix_array.clear();
             suffix_array.shrink_to_fit();
@@ -81,7 +123,7 @@ int main(int argc, char* argv[]) {
         }
 
         std::cerr << "Genome loaded: " << total_bases << " bases across " << chromosomes.size() << " chromosomes\n";
-        const std::size_t file_size = mapper_memory::FMIndexView::write(config.index_path, chromosomes, 256U, 32U);
+        const std::size_t file_size = mapper_memory::FMIndexView::write(config.index_path, chromosomes, idx_config);
         std::cerr << "Index written: "
                   << static_cast<double>(file_size) / (1024.0 * 1024.0 * 1024.0)
                   << " GiB\n";

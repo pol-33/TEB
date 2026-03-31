@@ -4,6 +4,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <unordered_set>
@@ -15,6 +16,7 @@
 #endif
 
 #include "alignment.hpp"
+#include "fasta_reader.hpp"
 #include "fastq_reader.hpp"
 #include "fm_index.hpp"
 #include "fm_search.hpp"
@@ -30,6 +32,7 @@ struct Config {
     std::string index_path;
     std::string reads_path;
     std::string output_path;
+    std::string reference_path;  // Optional: for streaming reference access
     int max_errors = 0;
     int num_threads = 0;  // 0 = auto-detect
 };
@@ -62,6 +65,18 @@ struct ReadResult {
     std::string output_line;
 };
 
+void print_usage() {
+    std::cerr << "Usage: mapper -I genome.idx -i reads.fastq -o output.sam -k <0..3> [-t threads] [-R genome.fa]\n"
+              << "\n"
+              << "Options:\n"
+              << "  -I genome.idx    FM-index file (required)\n"
+              << "  -i reads.fastq   Input reads file (required)\n"
+              << "  -o output.sam    Output file (required)\n"
+              << "  -k <0..3>        Maximum edit distance (required)\n"
+              << "  -t threads       Number of threads (default: auto-detect)\n"
+              << "  -R genome.fa     Reference FASTA (required if index lacks packed genome)\n";
+}
+
 Config parse_args(int argc, char* argv[]) {
     Config config;
     for (int i = 1; i < argc; ++i) {
@@ -76,15 +91,20 @@ Config parse_args(int argc, char* argv[]) {
             config.max_errors = std::stoi(argv[++i]);
         } else if (arg == "-t" && i + 1 < argc) {
             config.num_threads = std::stoi(argv[++i]);
-        } else if (arg == "-R") {
-            throw std::runtime_error("direct -R mode is disabled for the contest-scale mapper; build an FM-index first");
+        } else if (arg == "-R" && i + 1 < argc) {
+            config.reference_path = argv[++i];
+        } else if (arg == "-h" || arg == "--help") {
+            print_usage();
+            std::exit(0);
         } else {
-            throw std::runtime_error("usage: mapper -I genome.idx -i reads.fastq -o output.sam -k <0..3> [-t threads]");
+            print_usage();
+            throw std::runtime_error("unknown argument: " + arg);
         }
     }
     if (config.index_path.empty() || config.reads_path.empty() || config.output_path.empty() ||
         config.max_errors < 0 || config.max_errors > 3) {
-        throw std::runtime_error("usage: mapper -I genome.idx -i reads.fastq -o output.sam -k <0..3> [-t threads]");
+        print_usage();
+        throw std::runtime_error("missing required arguments or invalid max_errors");
     }
     return config;
 }
@@ -144,7 +164,8 @@ mapper_memory::Alignment verify_candidate(const mapper_memory::FMIndexView::Chro
                                           uint64_t text_pos,
                                           int max_errors,
                                           mapper_memory::AlignmentWorkspace& workspace,
-                                          std::string& ref_buffer) {
+                                          std::string& ref_buffer,
+                                          mapper_memory::IndexedFasta* fasta) {
     mapper_memory::Alignment best;
     best.edit_dist = std::numeric_limits<int>::max();
 
@@ -159,7 +180,21 @@ mapper_memory::Alignment verify_candidate(const mapper_memory::FMIndexView::Chro
 
     ref_buffer.reserve(normalized_read.size() + static_cast<std::size_t>(max_errors));
     for (uint64_t ref_len = min_ref_len; ref_len <= max_ref_len; ++ref_len) {
-        chrom.extract_reference(text_pos, ref_len, ref_buffer);
+        // Use either embedded genome or streaming FASTA
+        if (chrom.can_extract_reference()) {
+            chrom.extract_reference(text_pos, ref_len, ref_buffer);
+        } else if (fasta != nullptr) {
+            const std::size_t chrom_idx = fasta->find_chromosome(std::string(chrom.name));
+            if (chrom_idx != SIZE_MAX) {
+                fasta->extract(chrom_idx, text_pos, ref_len, ref_buffer);
+            } else {
+                continue;
+            }
+        } else {
+            // No way to get reference - skip
+            continue;
+        }
+        
         mapper_memory::Alignment current = mapper_memory::band_align(normalized_read, ref_buffer, max_errors, workspace);
         if (current.edit_dist <= max_errors && current.edit_dist < best.edit_dist) {
             current.chrom = std::string(chrom.name);
@@ -178,7 +213,8 @@ void evaluate_interval(const mapper_memory::FMIndexView::ChromosomeView& chrom,
                        mapper_memory::AlignmentWorkspace& workspace,
                        std::string& ref_buffer,
                        std::unordered_set<uint64_t>& seen_positions,
-                       std::vector<VerifiedAlignment>& best_alignments) {
+                       std::vector<VerifiedAlignment>& best_alignments,
+                       mapper_memory::IndexedFasta* fasta) {
     const uint64_t max_row = std::min<uint64_t>(result.sa_hi, result.sa_lo + 4ULL);
     for (uint64_t row = result.sa_lo; row < max_row; ++row) {
         const uint64_t text_pos = chrom.locate(row);
@@ -192,7 +228,7 @@ void evaluate_interval(const mapper_memory::FMIndexView::ChromosomeView& chrom,
             continue;
         }
         mapper_memory::Alignment alignment =
-            verify_candidate(chrom, normalized_read, text_pos, max_errors, workspace, ref_buffer);
+            verify_candidate(chrom, normalized_read, text_pos, max_errors, workspace, ref_buffer, fasta);
         if (alignment.edit_dist <= max_errors) {
             maybe_push_alignment(best_alignments, VerifiedAlignment{alignment, chrom_index, text_pos}, normalized_read.size());
         }
@@ -206,7 +242,8 @@ void search_orientation(const mapper_memory::FMIndexView& index,
                         std::string& ref_buffer,
                         std::unordered_set<uint64_t>& seen_positions,
                         std::vector<mapper_memory::SearchResult>& search_results,
-                        std::vector<VerifiedAlignment>& best_alignments) {
+                        std::vector<VerifiedAlignment>& best_alignments,
+                        mapper_memory::IndexedFasta* fasta) {
     for (std::size_t chrom_index = 0; chrom_index < index.chromosome_count(); ++chrom_index) {
         const auto& chrom = index.chromosome(chrom_index);
         search_results.clear();
@@ -227,7 +264,7 @@ void search_orientation(const mapper_memory::FMIndexView& index,
                 break;
             }
             evaluate_interval(chrom, chrom_index, result, normalized_read, max_errors, workspace,
-                              ref_buffer, seen_positions, best_alignments);
+                              ref_buffer, seen_positions, best_alignments, fasta);
             if (best_alignments.size() == 2U && best_alignments.back().alignment.edit_dist == 0) {
                 break;
             }
@@ -287,18 +324,19 @@ void report_peak_rss() {
 std::string process_read(const mapper_memory::FMIndexView& index,
                          const mapper_memory::Read& read,
                          int max_errors,
-                         ThreadWorkspace& ws) {
+                         ThreadWorkspace& ws,
+                         mapper_memory::IndexedFasta* fasta) {
     ws.normalized = mapper_memory::normalize_sequence(read.seq);
     ws.best_alignments.clear();
     ws.seen_positions.clear();
 
     search_orientation(index, ws.normalized, max_errors, ws.align_workspace, ws.ref_buffer,
-                       ws.seen_positions, ws.search_results, ws.best_alignments);
+                       ws.seen_positions, ws.search_results, ws.best_alignments, fasta);
 
     ws.reverse_complement = reverse_complement_sequence(ws.normalized);
     if (ws.reverse_complement != ws.normalized || ws.best_alignments.empty()) {
         search_orientation(index, ws.reverse_complement, max_errors, ws.align_workspace, ws.ref_buffer,
-                           ws.seen_positions, ws.search_results, ws.best_alignments);
+                           ws.seen_positions, ws.search_results, ws.best_alignments, fasta);
     }
 
     return format_record(read, ws.best_alignments);
@@ -332,6 +370,20 @@ int main(int argc, char* argv[]) {
         mapper_memory::FMIndexView index(config.index_path);
         std::cerr << "[mapper] index loaded, " << index.chromosome_count() << " chromosomes\n";
         
+        // Check if we need streaming FASTA
+        std::unique_ptr<mapper_memory::IndexedFasta> streaming_fasta;
+        const bool index_has_genome = index.has_genome() && 
+            (index.chromosome_count() == 0 || index.chromosome(0).can_extract_reference());
+        
+        if (!index_has_genome) {
+            if (config.reference_path.empty()) {
+                throw std::runtime_error("index does not contain packed genome; please provide -R genome.fa");
+            }
+            std::cerr << "[mapper] index lacks packed genome, opening streaming FASTA from " << config.reference_path << "\n";
+            streaming_fasta = std::make_unique<mapper_memory::IndexedFasta>(config.reference_path);
+            std::cerr << "[mapper] streaming FASTA opened, " << streaming_fasta->chromosome_count() << " chromosomes\n";
+        }
+        
         std::cerr << "[mapper] opening reads from " << config.reads_path << "\n";
         mapper_memory::FastqReader reader(config.reads_path);
         std::ofstream out(config.output_path);
@@ -354,6 +406,9 @@ int main(int argc, char* argv[]) {
 
         uint64_t processed = 0;
         mapper_memory::Read read;
+        
+        // Get raw pointer for use in parallel region
+        mapper_memory::IndexedFasta* fasta_ptr = streaming_fasta.get();
 
         while (true) {
             // Read a batch (sequential - fast I/O)
@@ -380,7 +435,7 @@ int main(int argc, char* argv[]) {
                 const int tid = 0;
 #endif
                 batch_results[i] = process_read(index, batch_reads[i], config.max_errors, 
-                                                 workspaces[static_cast<std::size_t>(tid)]);
+                                                 workspaces[static_cast<std::size_t>(tid)], fasta_ptr);
             }
 
             // Write results in order (sequential - maintains ordering)

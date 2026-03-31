@@ -18,11 +18,16 @@ namespace mapper_memory {
 
 namespace {
 
-constexpr char kMagic[8] = {'F', 'M', 'C', 'H', 'R', '0', '0', '1'};
+// Updated magic with version for new format
+constexpr char kMagic[8] = {'F', 'M', 'C', 'H', 'R', '0', '0', '2'};  // Version 002
+
+// Feature flags
+constexpr uint8_t kFlagHasGenome = 0x01;
 
 struct ChromosomeHeader {
     uint16_t name_len = 0;
-    uint16_t reserved = 0;
+    uint8_t flags = 0;          // Per-chromosome flags
+    uint8_t reserved = 0;
     uint32_t reserved2 = 0;
     uint64_t length = 0;
     uint64_t text_length = 0;
@@ -88,24 +93,29 @@ OwnedChromosomeIndex build_chromosome_index(const std::string& name,
                                             const std::string& sequence,
                                             const BWTData& bwt,
                                             const std::vector<uint32_t>& suffix_array,
-                                            uint32_t occ_sample,
-                                            uint32_t sa_sample) {
+                                            const IndexConfig& config) {
     OwnedChromosomeIndex index;
     index.name = name;
     index.length = sequence.size();
     index.text_length = bwt.text_length;
     index.primary_index = bwt.primary_index;
-    index.occ_sample = occ_sample;
-    index.sa_sample = sa_sample;
+    index.occ_sample = config.occ_sample;
+    index.sa_sample = config.sa_sample;
     index.packed_bwt = bwt.packed_bwt;
-    index.packed_genome = pack_sequence(sequence);
+    
+    // Only pack genome if configured
+    if (config.store_genome) {
+        index.packed_genome = pack_sequence(sequence);
+    }
 
+    // Build C array
     index.c_array[0] = 0;
     for (std::size_t rank = 1; rank < index.c_array.size(); ++rank) {
         index.c_array[rank] = index.c_array[rank - 1U] + bwt.counts[rank - 1U];
     }
 
-    const std::size_t occ_blocks = occ_checkpoint_count(index.text_length, occ_sample);
+    // Build Occ checkpoints
+    const std::size_t occ_blocks = occ_checkpoint_count(index.text_length, config.occ_sample);
     index.sampled_occ.assign(occ_blocks * 4U, 0U);
     std::array<uint32_t, 4> running{};
     for (uint64_t row = 0; row < index.text_length; ++row) {
@@ -113,33 +123,51 @@ OwnedChromosomeIndex build_chromosome_index(const std::string& name,
         if (rank >= kARank) {
             ++running[dna_occ_index(rank)];
         }
-        if ((row + 1ULL) % occ_sample == 0ULL) {
-            const std::size_t block = static_cast<std::size_t>((row + 1ULL) / occ_sample);
+        if ((row + 1ULL) % config.occ_sample == 0ULL) {
+            const std::size_t block = static_cast<std::size_t>((row + 1ULL) / config.occ_sample);
             for (std::size_t i = 0; i < running.size(); ++i) {
                 index.sampled_occ[block * 4U + i] = running[i];
             }
         }
     }
 
-    const std::size_t sa_entries = sa_checkpoint_count(index.text_length, sa_sample);
+    // Build SA samples
+    const std::size_t sa_entries = sa_checkpoint_count(index.text_length, config.sa_sample);
     index.sampled_sa.assign(sa_entries, 0U);
-    for (uint64_t row = 0; row < index.text_length; row += sa_sample) {
-        index.sampled_sa[static_cast<std::size_t>(row / sa_sample)] = suffix_array[static_cast<std::size_t>(row)];
+    for (uint64_t row = 0; row < index.text_length; row += config.sa_sample) {
+        index.sampled_sa[static_cast<std::size_t>(row / config.sa_sample)] = suffix_array[static_cast<std::size_t>(row)];
     }
+    
     return index;
+}
+
+OwnedChromosomeIndex build_chromosome_index(const std::string& name,
+                                            const std::string& sequence,
+                                            const BWTData& bwt,
+                                            const std::vector<uint32_t>& suffix_array,
+                                            uint32_t occ_sample,
+                                            uint32_t sa_sample) {
+    IndexConfig config;
+    config.occ_sample = occ_sample;
+    config.sa_sample = sa_sample;
+    config.store_genome = true;
+    return build_chromosome_index(name, sequence, bwt, suffix_array, config);
 }
 
 std::size_t FMIndexView::write(const std::string& path,
                                const std::vector<OwnedChromosomeIndex>& chromosomes,
-                               uint32_t occ_sample,
-                               uint32_t sa_sample) {
+                               const IndexConfig& config) {
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (!out) {
         throw std::runtime_error("failed to open FM-index output file: " + path);
     }
 
+    // Build global flags
+    uint8_t global_flags = 0;
+    if (config.store_genome) global_flags |= kFlagHasGenome;
+
     const uint32_t num_chroms = static_cast<uint32_t>(chromosomes.size());
-    const uint64_t prelude_bytes = sizeof(kMagic) + sizeof(uint32_t) * 4U;
+    const uint64_t prelude_bytes = sizeof(kMagic) + sizeof(uint32_t) * 3U + sizeof(uint8_t) * 4U;
     uint64_t header_bytes = prelude_bytes;
     for (const OwnedChromosomeIndex& chrom : chromosomes) {
         header_bytes += sizeof(ChromosomeHeader) + chrom.name.size();
@@ -155,44 +183,56 @@ std::size_t FMIndexView::write(const std::string& path,
             throw std::runtime_error("chromosome name too long for serialized FM-index");
         }
 
+        // Set per-chromosome flags
+        header.flags = 0;
+        if (!chrom.packed_genome.empty()) header.flags |= kFlagHasGenome;
+
         header.name_len = static_cast<uint16_t>(chrom.name.size());
         header.length = chrom.length;
         header.text_length = chrom.text_length;
         header.primary_index = chrom.primary_index;
         std::copy(chrom.c_array.begin(), chrom.c_array.end(), header.c_array);
 
+        // Packed BWT
         header.packed_bwt_offset = offset;
         header.packed_bwt_bytes = chrom.packed_bwt.size();
         offset += chrom.packed_bwt.size();
         offset = align_up(offset, 8U);
 
+        // Occ checkpoints
         header.occ_offset = offset;
         header.occ_entries = chrom.sampled_occ.size();
         offset += chrom.sampled_occ.size() * sizeof(uint32_t);
         offset = align_up(offset, 8U);
 
+        // 32-bit SA
         header.sa_offset = offset;
         header.sa_entries = chrom.sampled_sa.size();
         offset += chrom.sampled_sa.size() * sizeof(uint32_t);
         offset = align_up(offset, 8U);
 
+        // Packed genome (optional)
         header.genome_offset = offset;
         header.genome_bytes = chrom.packed_genome.size();
         offset += chrom.packed_genome.size();
         offset = align_up(offset, 8U);
     }
 
+    // Write header
     out.write(kMagic, sizeof(kMagic));
-    write_value(out, occ_sample);
-    write_value(out, sa_sample);
+    write_value(out, config.occ_sample);
+    write_value(out, config.sa_sample);
     write_value(out, num_chroms);
-    const uint32_t reserved = 0;
-    write_value(out, reserved);
+    write_value(out, global_flags);
+    uint8_t reserved[3] = {0, 0, 0};
+    out.write(reinterpret_cast<const char*>(reserved), 3);
+    
     for (std::size_t i = 0; i < chromosomes.size(); ++i) {
         out.write(reinterpret_cast<const char*>(&headers[i]), sizeof(ChromosomeHeader));
         out.write(chromosomes[i].name.data(), static_cast<std::streamsize>(chromosomes[i].name.size()));
     }
 
+    // Padding to data_start
     const uint64_t current = static_cast<uint64_t>(out.tellp());
     if (current < data_start) {
         std::vector<char> padding(static_cast<std::size_t>(data_start - current), 0);
@@ -224,12 +264,24 @@ std::size_t FMIndexView::write(const std::string& path,
     return static_cast<std::size_t>(out.tellp());
 }
 
+std::size_t FMIndexView::write(const std::string& path,
+                               const std::vector<OwnedChromosomeIndex>& chromosomes,
+                               uint32_t occ_sample,
+                               uint32_t sa_sample) {
+    IndexConfig config;
+    config.occ_sample = occ_sample;
+    config.sa_sample = sa_sample;
+    config.store_genome = true;
+    return write(path, chromosomes, config);
+}
+
 FMIndexView::FMIndexView()
     : fd_(-1),
       mapping_(nullptr),
       file_size_(0),
       occ_sample_(0),
-      sa_sample_(0) {}
+      sa_sample_(0),
+      flags_(0) {}
 
 FMIndexView::FMIndexView(const std::string& path) : FMIndexView() {
     open(path);
@@ -257,6 +309,7 @@ void FMIndexView::move_from(FMIndexView&& other) noexcept {
     file_size_ = other.file_size_;
     occ_sample_ = other.occ_sample_;
     sa_sample_ = other.sa_sample_;
+    flags_ = other.flags_;
     chromosomes_ = std::move(other.chromosomes_);
 
     other.fd_ = -1;
@@ -264,6 +317,7 @@ void FMIndexView::move_from(FMIndexView&& other) noexcept {
     other.file_size_ = 0;
     other.occ_sample_ = 0;
     other.sa_sample_ = 0;
+    other.flags_ = 0;
     other.chromosomes_.clear();
 }
 
@@ -312,13 +366,22 @@ void FMIndexView::close() {
     file_size_ = 0;
     occ_sample_ = 0;
     sa_sample_ = 0;
+    flags_ = 0;
 }
 
 void FMIndexView::parse() {
     const uint8_t* ptr = mapping_;
     const uint8_t* end = mapping_ + file_size_;
 
-    if (static_cast<std::size_t>(end - ptr) < sizeof(kMagic) || std::memcmp(ptr, kMagic, sizeof(kMagic)) != 0) {
+    // Check magic - support both old and new format
+    if (static_cast<std::size_t>(end - ptr) < sizeof(kMagic)) {
+        throw std::runtime_error("invalid FM-index magic header");
+    }
+    
+    // Check for version 001 (old format) or 002 (new format)
+    bool is_v1 = (std::memcmp(ptr, "FMCHR001", 8) == 0);
+    bool is_v2 = (std::memcmp(ptr, kMagic, sizeof(kMagic)) == 0);
+    if (!is_v1 && !is_v2) {
         throw std::runtime_error("invalid FM-index magic header");
     }
     ptr += sizeof(kMagic);
@@ -326,7 +389,14 @@ void FMIndexView::parse() {
     occ_sample_ = read_value<uint32_t>(ptr, end);
     sa_sample_ = read_value<uint32_t>(ptr, end);
     const uint32_t num_chroms = read_value<uint32_t>(ptr, end);
-    (void)read_value<uint32_t>(ptr, end);
+    
+    if (is_v2) {
+        flags_ = read_value<uint8_t>(ptr, end);
+        ptr += 3;  // Skip reserved bytes
+    } else {
+        flags_ = kFlagHasGenome;  // V1 always has genome
+        (void)read_value<uint32_t>(ptr, end);  // Skip old reserved field
+    }
 
     chromosomes_.clear();
     chromosomes_.reserve(num_chroms);
@@ -358,6 +428,14 @@ void FMIndexView::parse() {
         chrom.sampled_occ_entries = static_cast<std::size_t>(header.occ_entries);
         chrom.sampled_sa = reinterpret_cast<const uint32_t*>(mapping_ + header.sa_offset);
         chrom.sampled_sa_entries = static_cast<std::size_t>(header.sa_entries);
+        
+        // Set has_genome based on header flags
+        if (is_v2) {
+            chrom.has_genome = (header.flags & kFlagHasGenome) != 0;
+        } else {
+            chrom.has_genome = true;  // V1 always has genome
+        }
+        
         chrom.packed_genome = mapping_ + header.genome_offset;
         chrom.packed_genome_bytes = static_cast<std::size_t>(header.genome_bytes);
 
@@ -393,6 +471,10 @@ const FMIndexView::ChromosomeView& FMIndexView::chromosome(std::size_t index) co
 
 const std::vector<FMIndexView::ChromosomeView>& FMIndexView::chromosomes() const {
     return chromosomes_;
+}
+
+bool FMIndexView::has_genome() const {
+    return (flags_ & kFlagHasGenome) != 0;
 }
 
 uint64_t FMIndexView::ChromosomeView::n() const {
@@ -434,7 +516,11 @@ uint64_t FMIndexView::ChromosomeView::locate(uint64_t row) const {
         row = lf(row);
         ++steps;
     }
-    return (static_cast<uint64_t>(sampled_sa[static_cast<std::size_t>(row / sa_sample)]) + steps) % text_length;
+    
+    const std::size_t sa_idx = static_cast<std::size_t>(row / sa_sample);
+    const uint32_t sa_value = sampled_sa[sa_idx];
+    
+    return (static_cast<uint64_t>(sa_value) + steps) % text_length;
 }
 
 bool FMIndexView::ChromosomeView::same_chromosome_window(uint64_t text_pos, uint64_t span) const {

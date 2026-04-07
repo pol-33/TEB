@@ -15,6 +15,7 @@ CORRECTNESS_READS="${CORRECTNESS_READS:-250}"
 BUILD_INDEX_IF_MISSING="${BUILD_INDEX_IF_MISSING:-0}"
 TIME_STYLE="${TIME_STYLE:-auto}"
 BWA_THREADS="${BWA_THREADS:-8}"
+MAPPER_REF="${MAPPER_REF:-}"  # Optional: streaming ref for memory-optimized indexes
 
 mkdir -p "$OUT_DIR"
 
@@ -531,7 +532,9 @@ MAP_TIME="$OUT_DIR/mapper.time.log"
 MAP_STDERR="$OUT_DIR/mapper.stderr.log"
 
 log "benchmarking mapper on $BENCH_READ_COUNT read(s) with k=$K"
-run_with_time "mapper" /dev/null "$MAP_STDERR" "$MAP_TIME" "$ROOT_DIR/mapper" -I "$INDEX" -i "$BENCH_FASTQ" -o "$MAP_OUTPUT" -k "$K" || {
+MAPPER_ARGS=(-I "$INDEX" -i "$BENCH_FASTQ" -o "$MAP_OUTPUT" -k "$K")
+[[ -n "$MAPPER_REF" ]] && MAPPER_ARGS+=(-R "$MAPPER_REF")
+run_with_time "mapper" /dev/null "$MAP_STDERR" "$MAP_TIME" "$ROOT_DIR/mapper" "${MAPPER_ARGS[@]}" || {
   cat "$MAP_STDERR" >&2
   die "mapper run failed"
 }
@@ -624,7 +627,9 @@ if [[ "$BENCH_READS" -eq "$CORRECTNESS_READS" ]]; then
   cp "$OUT_DIR/mapper.validation" "$OUT_DIR/correctness.validation"
 else
   log "running mapper correctness subset ($CORRECTNESS_COUNT reads)"
-  "$ROOT_DIR/mapper" -I "$INDEX" -i "$CORRECTNESS_FASTQ" -o "$MAPPER_CORRECTNESS_OUTPUT" -k "$K" > /dev/null
+  CORRECTNESS_MAPPER_ARGS=(-I "$INDEX" -i "$CORRECTNESS_FASTQ" -o "$MAPPER_CORRECTNESS_OUTPUT" -k "$K")
+  [[ -n "$MAPPER_REF" ]] && CORRECTNESS_MAPPER_ARGS+=(-R "$MAPPER_REF")
+  "$ROOT_DIR/mapper" "${CORRECTNESS_MAPPER_ARGS[@]}" > /dev/null
   validate_mapper_output "$MAPPER_CORRECTNESS_OUTPUT" "$CHROM_SIZES" "$CORRECTNESS_COUNT" "$OUT_DIR/correctness.validation"
 fi
 

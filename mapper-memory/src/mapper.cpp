@@ -22,6 +22,7 @@
 #include "fm_search.hpp"
 #include "memory_stats.hpp"
 #include "nucleotide.hpp"
+#include "simd_dispatch.hpp"
 
 // Batch size for parallel processing - tune for cache efficiency
 constexpr std::size_t BATCH_SIZE = 1024;
@@ -369,6 +370,8 @@ int main(int argc, char* argv[]) {
         std::cerr << "[mapper] loading FM-index from " << config.index_path << "\n";
         mapper_memory::FMIndexView index(config.index_path);
         std::cerr << "[mapper] index loaded, " << index.chromosome_count() << " chromosomes\n";
+        const mapper_memory::simd::DispatchInfo simd_dispatch = mapper_memory::simd::resolved_dispatch();
+        std::cerr << "[mapper] occ backend: " << mapper_memory::simd::backend_name(simd_dispatch.backend) << "\n";
         
         // Check if we need streaming FASTA
         std::unique_ptr<mapper_memory::IndexedFasta> streaming_fasta;

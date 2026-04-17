@@ -13,6 +13,7 @@
 #include <unistd.h>
 
 #include "nucleotide.hpp"
+#include "simd_dispatch.hpp"
 
 namespace mapper_memory {
 
@@ -495,13 +496,14 @@ uint32_t FMIndexView::ChromosomeView::occ(uint8_t rank, uint64_t pos) const {
     if (rank == kSentinelRank) {
         return static_cast<uint32_t>(pos > primary_index ? 1U : 0U);
     }
+    if (rank == kSeparatorRank || rank > kTRank) {
+        return 0U;
+    }
 
     const uint64_t block = pos / occ_sample;
     const uint64_t start = block * occ_sample;
     uint32_t count = sampled_occ[static_cast<std::size_t>(block * 4ULL + dna_occ_index(rank))];
-    for (uint64_t row = start; row < pos; ++row) {
-        count += static_cast<uint32_t>(char_rank(row) == rank);
-    }
+    count += simd::count_packed_range(static_cast<uint8_t>(rank - kARank), packed_bwt, start, pos, primary_index);
     return count;
 }
 

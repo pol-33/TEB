@@ -13,6 +13,14 @@
 make
 ```
 
+Optional SIMD modes:
+
+```bash
+make SIMD=auto    # default: portable build, use AVX-512 only when supported
+make SIMD=off     # scalar-only build
+make SIMD=avx512  # require x86_64 compiler support for AVX-512
+```
+
 Run the tiny smoke test:
 
 ```bash
@@ -32,6 +40,14 @@ The harness auto-detects whether `/usr/bin/time -l` is available. On restricted 
 ```bash
 ./indexer -R /path/to/genome.fa -I /path/to/genome.fmidx
 ./mapper  -I /path/to/genome.fmidx -i /path/to/reads.fastq -o /path/to/output.sam -k 1
+```
+
+Optional runtime override for the packed-BWT occurrence counter:
+
+```bash
+MAPPER_SIMD=auto ./mapper ...
+MAPPER_SIMD=off ./mapper ...
+MAPPER_SIMD=avx512 ./mapper ...
 ```
 
 The contest-scale mapper currently requires a prebuilt index. Reads are streamed one record at a time, and the output format is:

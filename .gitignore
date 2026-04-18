@@ -22,5 +22,6 @@ mapper
 test
 bench-results
 *bench-*
+reference.bwa*
 
 .DS_Store

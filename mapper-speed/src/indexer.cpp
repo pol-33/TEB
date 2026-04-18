@@ -1,7 +1,9 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -16,11 +18,6 @@ namespace {
 struct Config {
     std::string reference_path;
     std::string index_path;
-};
-
-struct UniqueCount {
-    uint32_t key = 0;
-    uint32_t count = 0;
 };
 
 constexpr std::size_t kDensePageThreshold =
@@ -53,74 +50,237 @@ Config parse_args(int argc, char* argv[]) {
     return cfg;
 }
 
-std::vector<uint32_t> collect_valid_positions(const mapper_speed::ReferenceData& reference) {
-    std::vector<uint32_t> positions;
-    if (reference.genome_length < mapper_speed::kSeedLength) {
-        return positions;
-    }
-    positions.reserve(reference.genome_length);
+template <typename Callback>
+void for_each_valid_seed(const mapper_speed::ReferenceData& reference, Callback&& callback) {
+    constexpr uint32_t kRollingMask = 0xFFFFFFFFu;
 
     for (const auto& chrom : reference.chromosomes) {
-        if (chrom.length < mapper_speed::kSeedLength) {
-            continue;
-        }
+        uint32_t rolling_key = 0;
         uint32_t valid_run = 0;
         for (uint32_t i = 0; i < chrom.length; ++i) {
             const uint32_t global = chrom.start + i;
-            const char base = mapper_speed::bitset_get(reference.n_mask_words.data(), global)
-                ? 'N'
-                : mapper_speed::kCodeToBase[mapper_speed::packed_get(reference.packed_bases.data(), global)];
-            const uint8_t code = mapper_speed::base_to_code(base);
+            const uint8_t code = mapper_speed::bitset_get(reference.n_mask_words.data(), global)
+                ? mapper_speed::kBaseCodeInvalid
+                : mapper_speed::packed_get(reference.packed_bases.data(), global);
             if (code == mapper_speed::kBaseCodeInvalid) {
+                rolling_key = 0;
                 valid_run = 0;
                 continue;
             }
+
+            rolling_key = ((rolling_key << 2u) | code) & kRollingMask;
             if (valid_run < mapper_speed::kSeedLength) {
                 ++valid_run;
             }
             if (valid_run >= mapper_speed::kSeedLength) {
-                positions.push_back(global - mapper_speed::kSeedLength + 1u);
+                callback(rolling_key, global - mapper_speed::kSeedLength + 1u);
             }
         }
     }
-    return positions;
 }
 
-uint32_t seed_key_at(const mapper_speed::ReferenceData& reference, uint32_t global_pos) {
-    uint32_t key = 0;
-    for (uint32_t i = 0; i < mapper_speed::kSeedLength; ++i) {
-        const uint32_t pos = global_pos + i;
-        const uint8_t code = mapper_speed::bitset_get(reference.n_mask_words.data(), pos)
-            ? mapper_speed::kBaseCodeInvalid
-            : mapper_speed::packed_get(reference.packed_bases.data(), pos);
-        if (code == mapper_speed::kBaseCodeInvalid) {
-            return 0;
-        }
-        key = (key << 2u) | code;
-    }
-    return key;
+std::size_t count_valid_positions(const mapper_speed::ReferenceData& reference) {
+    std::size_t count = 0;
+    for_each_valid_seed(reference, [&](uint32_t, uint32_t) {
+        ++count;
+    });
+    return count;
 }
+
+unsigned choose_bucket_bits(std::size_t valid_positions) {
+    const uint64_t ram = mapper_speed::physical_memory_bytes();
+    const uint64_t target_bucket_bytes = ram == 0u
+        ? (uint64_t{1} << 30u)
+        : std::max<uint64_t>(uint64_t{512} << 20u, ram / 10u);
+
+    unsigned bits = 0;
+    while (bits < 12u) {
+        const uint64_t bucket_count = uint64_t{1} << bits;
+        const uint64_t avg_bytes =
+            (static_cast<uint64_t>(valid_positions) * sizeof(uint64_t) + bucket_count - 1u) / bucket_count;
+        if (avg_bytes <= target_bucket_bytes) {
+            break;
+        }
+        ++bits;
+    }
+    return bits;
+}
+
+void collect_bucket_records(const mapper_speed::ReferenceData& reference,
+                            unsigned bucket_bits,
+                            uint32_t bucket_id,
+                            std::size_t reserve_hint,
+                            std::vector<uint64_t>& records) {
+    records.clear();
+    if (reserve_hint > 0u) {
+        records.reserve(reserve_hint);
+    }
+    const unsigned shift = 32u - bucket_bits;
+    for_each_valid_seed(reference, [&](uint32_t key, uint32_t pos) {
+        if (bucket_bits == 0u || (key >> shift) == bucket_id) {
+            records.push_back((uint64_t{key} << 32u) | pos);
+        }
+    });
+}
+
+void append_padding(std::ofstream& out, uint64_t target_offset) {
+    const uint64_t current = static_cast<uint64_t>(out.tellp());
+    if (current >= target_offset) {
+        return;
+    }
+    std::vector<char> padding(static_cast<std::size_t>(target_offset - current), 0);
+    out.write(padding.data(), static_cast<std::streamsize>(padding.size()));
+    if (!out) {
+        throw std::runtime_error("failed to write index padding");
+    }
+}
+
+template <typename T>
+void write_value(std::ofstream& out, const T& value) {
+    out.write(reinterpret_cast<const char*>(&value), sizeof(T));
+    if (!out) {
+        throw std::runtime_error("failed to write index file");
+    }
+}
+
+class DirectIndexWriter {
+public:
+    DirectIndexWriter(const std::string& path,
+                      const mapper_speed::ReferenceData& reference,
+                      std::size_t page_count,
+                      std::size_t positions_count)
+        : out_(path, std::ios::binary | std::ios::trunc) {
+        if (!out_) {
+            throw std::runtime_error("failed to open index output: " + path);
+        }
+
+        std::memcpy(header_.magic, "MSPDIDX1", 8u);
+        header_.checksum = reference.checksum;
+        header_.genome_length = reference.genome_length;
+        header_.chromosome_count = static_cast<uint32_t>(reference.chromosomes.size());
+        header_.packed_reference_bytes = reference.packed_bases.size();
+        header_.n_mask_bytes = reference.n_mask_words.size() * sizeof(uint64_t);
+        header_.offset_page_count = page_count;
+        header_.positions_count = positions_count;
+
+        uint64_t offset = sizeof(mapper_speed::IndexHeader);
+        header_.chromosome_table_offset = offset;
+        for (const auto& chrom : reference.chromosomes) {
+            offset += sizeof(mapper_speed::StoredChromosome) + chrom.name.size();
+        }
+        offset = mapper_speed::align_up(offset, 64u);
+
+        header_.packed_reference_offset = offset;
+        offset += header_.packed_reference_bytes;
+        offset = mapper_speed::align_up(offset, 64u);
+
+        header_.n_mask_offset = offset;
+        offset += header_.n_mask_bytes;
+        offset = mapper_speed::align_up(offset, 64u);
+
+        header_.offset_page_meta_offset = offset;
+        offset += static_cast<uint64_t>(page_count) * sizeof(mapper_speed::OffsetPageMeta);
+        offset = mapper_speed::align_up(offset, 64u);
+
+        header_.positions_offset = offset;
+        offset += static_cast<uint64_t>(positions_count) * sizeof(uint32_t);
+        offset = mapper_speed::align_up(offset, 64u);
+
+        page_data_offset_ = offset;
+
+        write_value(out_, header_);
+
+        for (const auto& chrom : reference.chromosomes) {
+            mapper_speed::StoredChromosome stored{};
+            stored.name_len = static_cast<uint32_t>(chrom.name.size());
+            stored.start = chrom.start;
+            stored.length = chrom.length;
+            write_value(out_, stored);
+            out_.write(chrom.name.data(), static_cast<std::streamsize>(chrom.name.size()));
+            if (!out_) {
+                throw std::runtime_error("failed to write chromosome name");
+            }
+        }
+
+        append_padding(out_, header_.packed_reference_offset);
+        out_.write(reinterpret_cast<const char*>(reference.packed_bases.data()),
+                   static_cast<std::streamsize>(reference.packed_bases.size()));
+
+        append_padding(out_, header_.n_mask_offset);
+        out_.write(reinterpret_cast<const char*>(reference.n_mask_words.data()),
+                   static_cast<std::streamsize>(reference.n_mask_words.size() * sizeof(uint64_t)));
+
+        append_padding(out_, header_.offset_page_meta_offset);
+        std::vector<char> zero_meta(static_cast<std::size_t>(page_count * sizeof(mapper_speed::OffsetPageMeta)), 0);
+        out_.write(zero_meta.data(), static_cast<std::streamsize>(zero_meta.size()));
+
+        append_padding(out_, header_.positions_offset);
+        positions_cursor_ = header_.positions_offset;
+        page_data_cursor_ = page_data_offset_;
+    }
+
+    void append_positions(const uint32_t* data, std::size_t count) {
+        out_.seekp(static_cast<std::streamoff>(positions_cursor_));
+        out_.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(count * sizeof(uint32_t)));
+        if (!out_) {
+            throw std::runtime_error("failed to append positions");
+        }
+        positions_cursor_ += count * sizeof(uint32_t);
+    }
+
+    uint64_t append_page_data(const void* data, std::size_t bytes) {
+        out_.seekp(static_cast<std::streamoff>(page_data_cursor_));
+        const uint64_t offset = page_data_cursor_;
+        out_.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(bytes));
+        if (!out_) {
+            throw std::runtime_error("failed to append page data");
+        }
+        page_data_cursor_ += bytes;
+        return offset;
+    }
+
+    std::size_t finalize(const std::vector<mapper_speed::OffsetPageMeta>& page_meta) {
+        out_.seekp(static_cast<std::streamoff>(header_.offset_page_meta_offset));
+        out_.write(reinterpret_cast<const char*>(page_meta.data()),
+                   static_cast<std::streamsize>(page_meta.size() * sizeof(mapper_speed::OffsetPageMeta)));
+        if (!out_) {
+            throw std::runtime_error("failed to write page metadata");
+        }
+
+        out_.seekp(0);
+        write_value(out_, header_);
+        out_.seekp(0, std::ios::end);
+        out_.flush();
+        if (!out_) {
+            throw std::runtime_error("failed to finalize index");
+        }
+        return static_cast<std::size_t>(out_.tellp());
+    }
+
+private:
+    std::ofstream out_;
+    mapper_speed::IndexHeader header_{};
+    uint64_t page_data_offset_ = 0;
+    uint64_t positions_cursor_ = 0;
+    uint64_t page_data_cursor_ = 0;
+};
 
 void append_sparse_records(const std::vector<mapper_speed::OffsetTransition>& transitions,
-                           std::vector<uint8_t>& page_data,
+                           DirectIndexWriter& writer,
                            mapper_speed::OffsetPageMeta& meta) {
     meta.flags = mapper_speed::kOffsetPageSparse;
     meta.record_count = static_cast<uint16_t>(transitions.size());
-    meta.data_offset = page_data.size();
-    const std::size_t bytes = transitions.size() * sizeof(mapper_speed::OffsetTransition);
-    const std::size_t old_size = page_data.size();
-    page_data.resize(old_size + bytes);
-    std::memcpy(page_data.data() + old_size, transitions.data(), bytes);
+    meta.data_offset = writer.append_page_data(transitions.data(),
+                                               transitions.size() * sizeof(mapper_speed::OffsetTransition));
 }
 
 void append_dense_page(uint32_t base_value,
                        const std::vector<mapper_speed::OffsetTransition>& transitions,
                        uint32_t value_count,
-                       std::vector<uint8_t>& page_data,
+                       DirectIndexWriter& writer,
                        mapper_speed::OffsetPageMeta& meta) {
     meta.flags = mapper_speed::kOffsetPageDense;
     meta.record_count = static_cast<uint16_t>(value_count);
-    meta.data_offset = page_data.size();
 
     std::vector<uint32_t> values(value_count, base_value);
     std::size_t transition_idx = 0;
@@ -133,94 +293,88 @@ void append_dense_page(uint32_t base_value,
         values[local] = current;
     }
 
-    const std::size_t bytes = values.size() * sizeof(uint32_t);
-    const std::size_t old_size = page_data.size();
-    page_data.resize(old_size + bytes);
-    std::memcpy(page_data.data() + old_size, values.data(), bytes);
+    meta.data_offset = writer.append_page_data(values.data(), values.size() * sizeof(uint32_t));
 }
 
-void build_compact_index(const mapper_speed::ReferenceData& reference,
-                         std::vector<mapper_speed::OffsetPageMeta>& page_meta,
-                         std::vector<uint8_t>& page_data,
-                         std::vector<uint32_t>& positions) {
-    std::vector<uint32_t> valid_positions = collect_valid_positions(reference);
-    std::vector<uint64_t> records;
-    records.reserve(valid_positions.size());
-    for (uint32_t pos : valid_positions) {
-        records.push_back((uint64_t{seed_key_at(reference, pos)} << 32u) | pos);
-    }
-
-    std::sort(records.begin(), records.end());
-    positions.resize(records.size());
-
-    std::vector<UniqueCount> unique_counts;
-    unique_counts.reserve(records.size());
-
-    std::size_t i = 0;
-    uint32_t out = 0;
-    while (i < records.size()) {
-        const uint32_t key = static_cast<uint32_t>(records[i] >> 32u);
-        uint32_t count = 0;
-        while (i < records.size() && static_cast<uint32_t>(records[i] >> 32u) == key) {
-            positions[out++] = static_cast<uint32_t>(records[i]);
-            ++count;
-            ++i;
-        }
-        unique_counts.push_back(UniqueCount{key, count});
-    }
-
+std::size_t build_multipass_index(const mapper_speed::ReferenceData& reference,
+                                  const std::string& index_path,
+                                  std::size_t valid_positions,
+                                  unsigned bucket_bits) {
     const uint64_t page_count =
         (mapper_speed::kOffsetEntryCount + mapper_speed::kOffsetPageSize - 1u) / mapper_speed::kOffsetPageSize;
-    page_meta.assign(static_cast<std::size_t>(page_count), mapper_speed::OffsetPageMeta{});
+    std::vector<mapper_speed::OffsetPageMeta> page_meta(
+        static_cast<std::size_t>(page_count), mapper_speed::OffsetPageMeta{});
 
-    std::size_t unique_idx = 0;
-    uint32_t running = 0;
-    for (uint64_t page = 0; page < page_count; ++page) {
-        const uint64_t start_key = page * mapper_speed::kOffsetPageSize;
-        const uint64_t remaining = mapper_speed::kOffsetEntryCount - start_key;
-        const uint32_t value_count =
-            static_cast<uint32_t>(std::min<uint64_t>(mapper_speed::kOffsetPageSize, remaining));
+    DirectIndexWriter writer(index_path, reference, page_meta.size(), valid_positions);
+    const uint32_t bucket_count = uint32_t{1} << bucket_bits;
+    const std::size_t reserve_hint = (valid_positions + bucket_count - 1u) / bucket_count;
 
-        mapper_speed::OffsetPageMeta meta{};
-        meta.base_value = running;
+    std::vector<uint64_t> records;
+    std::vector<mapper_speed::OffsetTransition> transitions;
+    std::vector<uint32_t> grouped_positions;
+    std::size_t positions_written = 0;
 
-        const uint64_t page_key_end = std::min<uint64_t>(uint64_t{1} << (2 * mapper_speed::kSeedLength),
-                                                         start_key + value_count);
-        std::size_t page_unique_end = unique_idx;
-        while (page_unique_end < unique_counts.size() && unique_counts[page_unique_end].key < page_key_end) {
-            ++page_unique_end;
-        }
+    for (uint32_t bucket = 0; bucket < bucket_count; ++bucket) {
+        std::cerr << "[indexer] bucket " << (bucket + 1u) << "/" << bucket_count << '\n';
+        collect_bucket_records(reference, bucket_bits, bucket, reserve_hint, records);
+        std::sort(records.begin(), records.end());
 
-        if (unique_idx != page_unique_end) {
-            std::vector<mapper_speed::OffsetTransition> transitions;
-            transitions.reserve(page_unique_end - unique_idx);
+        const uint64_t bucket_start_key = static_cast<uint64_t>(bucket) << (32u - bucket_bits);
+        const uint64_t bucket_end_key = (bucket + 1u == bucket_count)
+            ? (uint64_t{1} << 32u)
+            : (static_cast<uint64_t>(bucket + 1u) << (32u - bucket_bits));
+        const uint64_t start_page = bucket_start_key >> mapper_speed::kOffsetPageShift;
+        const uint64_t end_page =
+            (bucket_end_key + mapper_speed::kOffsetPageSize - 1u) >> mapper_speed::kOffsetPageShift;
 
-            uint32_t page_running = running;
-            for (std::size_t idx = unique_idx; idx < page_unique_end; ++idx) {
-                const uint32_t local_key = unique_counts[idx].key - static_cast<uint32_t>(start_key);
-                page_running += unique_counts[idx].count;
+        std::size_t record_idx = 0;
+        for (uint64_t page = start_page; page < end_page; ++page) {
+            const uint64_t start_key = page * mapper_speed::kOffsetPageSize;
+            const uint64_t remaining = mapper_speed::kOffsetEntryCount - start_key;
+            const uint32_t value_count =
+                static_cast<uint32_t>(std::min<uint64_t>(mapper_speed::kOffsetPageSize, remaining));
+            const uint64_t page_key_end = std::min<uint64_t>(uint64_t{1} << 32u, start_key + value_count);
+
+            mapper_speed::OffsetPageMeta meta{};
+            meta.base_value = static_cast<uint32_t>(positions_written);
+            transitions.clear();
+
+            while (record_idx < records.size() && static_cast<uint32_t>(records[record_idx] >> 32u) < page_key_end) {
+                const uint32_t key = static_cast<uint32_t>(records[record_idx] >> 32u);
+                const std::size_t group_begin = record_idx;
+                while (record_idx < records.size() && static_cast<uint32_t>(records[record_idx] >> 32u) == key) {
+                    ++record_idx;
+                }
+                const std::size_t group_size = record_idx - group_begin;
+                grouped_positions.resize(group_size);
+                for (std::size_t i = 0; i < group_size; ++i) {
+                    grouped_positions[i] = static_cast<uint32_t>(records[group_begin + i]);
+                }
+                writer.append_positions(grouped_positions.data(), group_size);
+                positions_written += group_size;
+
+                const uint32_t local_key = key - static_cast<uint32_t>(start_key);
                 if (local_key + 1u < value_count) {
                     transitions.push_back(mapper_speed::OffsetTransition{
                         static_cast<uint16_t>(local_key + 1u),
-                        page_running
+                        static_cast<uint32_t>(positions_written)
                     });
                 }
             }
 
             if (!transitions.empty()) {
                 if (transitions.size() >= kDensePageThreshold) {
-                    append_dense_page(running, transitions, value_count, page_data, meta);
+                    append_dense_page(meta.base_value, transitions, value_count, writer, meta);
                 } else {
-                    append_sparse_records(transitions, page_data, meta);
+                    append_sparse_records(transitions, writer, meta);
                 }
             }
-
-            running = page_running;
-            unique_idx = page_unique_end;
+            page_meta[static_cast<std::size_t>(page)] = meta;
         }
-
-        page_meta[static_cast<std::size_t>(page)] = meta;
     }
+
+    page_meta.back().base_value = static_cast<uint32_t>(positions_written);
+    return writer.finalize(page_meta);
 }
 
 }  // namespace
@@ -229,19 +383,20 @@ int main(int argc, char* argv[]) {
     try {
         const Config cfg = parse_args(argc, argv);
         mapper_speed::ReferenceData reference = mapper_speed::load_reference(cfg.reference_path);
-        std::vector<mapper_speed::OffsetPageMeta> page_meta;
-        std::vector<uint8_t> page_data;
-        std::vector<uint32_t> positions;
 
         std::cerr << "[indexer] genome length: " << reference.genome_length << " bp across "
                   << reference.chromosomes.size() << " chromosomes\n";
-        std::cerr << "[indexer] build mode: compact-page-transitions\n";
 
-        build_compact_index(reference, page_meta, page_data, positions);
+        const std::size_t valid_positions = count_valid_positions(reference);
+        const unsigned bucket_bits = choose_bucket_bits(valid_positions);
+        const uint32_t bucket_count = uint32_t{1} << bucket_bits;
 
-        const std::size_t bytes =
-            mapper_speed::write_index(cfg.index_path, reference, page_meta, page_data, positions);
-        std::cerr << "[indexer] valid " << mapper_speed::kSeedLength << "-mers: " << positions.size() << "\n";
+        std::cerr << "[indexer] build mode: compact-page-transitions (multipass-" << bucket_count
+                  << "-bucket)\n";
+
+        const std::size_t bytes = build_multipass_index(reference, cfg.index_path, valid_positions, bucket_bits);
+
+        std::cerr << "[indexer] valid " << mapper_speed::kSeedLength << "-mers: " << valid_positions << "\n";
         std::cerr << "[indexer] index written: " << mapper_speed::bytes_to_mebibytes(bytes) << " MiB\n";
         std::cerr << "[indexer] peak RSS: " << mapper_speed::bytes_to_mebibytes(mapper_speed::peak_rss_bytes()) << " MiB\n";
         return 0;

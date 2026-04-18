@@ -28,6 +28,18 @@ void write_value(std::ofstream& out, const T& value) {
     }
 }
 
+void write_padding(std::ofstream& out, uint64_t target_offset) {
+    const uint64_t current = static_cast<uint64_t>(out.tellp());
+    if (current >= target_offset) {
+        return;
+    }
+    std::vector<char> padding(static_cast<std::size_t>(target_offset - current), 0);
+    out.write(padding.data(), static_cast<std::streamsize>(padding.size()));
+    if (!out) {
+        throw std::runtime_error("failed to write index padding");
+    }
+}
+
 }  // namespace
 
 std::size_t write_index(const std::string& path,
@@ -90,33 +102,15 @@ std::size_t write_index(const std::string& path,
         }
     }
 
-    {
-        const uint64_t current = static_cast<uint64_t>(out.tellp());
-        if (current < header.packed_reference_offset) {
-            std::vector<char> padding(static_cast<std::size_t>(header.packed_reference_offset - current), 0);
-            out.write(padding.data(), static_cast<std::streamsize>(padding.size()));
-        }
-    }
+    write_padding(out, header.packed_reference_offset);
 
     out.write(reinterpret_cast<const char*>(reference.packed_bases.data()),
               static_cast<std::streamsize>(reference.packed_bases.size()));
-    {
-        const uint64_t current = static_cast<uint64_t>(out.tellp());
-        if (current < header.n_mask_offset) {
-            std::vector<char> padding(static_cast<std::size_t>(header.n_mask_offset - current), 0);
-            out.write(padding.data(), static_cast<std::streamsize>(padding.size()));
-        }
-    }
+    write_padding(out, header.n_mask_offset);
 
     out.write(reinterpret_cast<const char*>(reference.n_mask_words.data()),
               static_cast<std::streamsize>(reference.n_mask_words.size() * sizeof(uint64_t)));
-    {
-        const uint64_t current = static_cast<uint64_t>(out.tellp());
-        if (current < header.offset_page_meta_offset) {
-            std::vector<char> padding(static_cast<std::size_t>(header.offset_page_meta_offset - current), 0);
-            out.write(padding.data(), static_cast<std::streamsize>(padding.size()));
-        }
-    }
+    write_padding(out, header.offset_page_meta_offset);
 
     std::vector<OffsetPageMeta> adjusted = page_meta;
     for (auto& meta : adjusted) {
@@ -126,22 +120,10 @@ std::size_t write_index(const std::string& path,
     }
     out.write(reinterpret_cast<const char*>(adjusted.data()),
               static_cast<std::streamsize>(adjusted.size() * sizeof(OffsetPageMeta)));
-    {
-        const uint64_t current = static_cast<uint64_t>(out.tellp());
-        if (current < page_data_offset) {
-            std::vector<char> padding(static_cast<std::size_t>(page_data_offset - current), 0);
-            out.write(padding.data(), static_cast<std::streamsize>(padding.size()));
-        }
-    }
+    write_padding(out, page_data_offset);
 
     out.write(reinterpret_cast<const char*>(page_data.data()), static_cast<std::streamsize>(page_data.size()));
-    {
-        const uint64_t current = static_cast<uint64_t>(out.tellp());
-        if (current < header.positions_offset) {
-            std::vector<char> padding(static_cast<std::size_t>(header.positions_offset - current), 0);
-            out.write(padding.data(), static_cast<std::streamsize>(padding.size()));
-        }
-    }
+    write_padding(out, header.positions_offset);
 
     out.write(reinterpret_cast<const char*>(positions.data()),
               static_cast<std::streamsize>(positions.size() * sizeof(uint32_t)));

@@ -83,7 +83,7 @@ bool FastqReader::next_line(const char*& begin, std::size_t& length) {
             return false;
         }
         if (begin_ == 0 && end_ == buffer_.size()) {
-            throw std::runtime_error("FASTQ record exceeds buffer size");
+            buffer_.resize(buffer_.size() * 2u);
         }
     }
 }
@@ -101,17 +101,8 @@ bool FastqReader::next(FastqRecord& record) {
     if (!next_line(header, header_len)) {
         return false;
     }
-    if (!next_line(seq, seq_len) || !next_line(plus, plus_len) || !next_line(qual, qual_len)) {
-        throw std::runtime_error("truncated FASTQ record");
-    }
     if (header_len == 0 || header[0] != '@') {
         throw std::runtime_error("invalid FASTQ header");
-    }
-    if (plus_len == 0 || plus[0] != '+') {
-        throw std::runtime_error("invalid FASTQ separator");
-    }
-    if (seq_len != qual_len) {
-        throw std::runtime_error("FASTQ sequence/quality length mismatch");
     }
 
     record.name.assign(header + 1, header_len - 1u);
@@ -119,7 +110,25 @@ bool FastqReader::next(FastqRecord& record) {
     if (cut != std::string::npos) {
         record.name.resize(cut);
     }
+
+    if (!next_line(seq, seq_len)) {
+        throw std::runtime_error("truncated FASTQ record");
+    }
     record.seq.assign(seq, seq_len);
+
+    if (!next_line(plus, plus_len)) {
+        throw std::runtime_error("truncated FASTQ record");
+    }
+    if (plus_len == 0 || plus[0] != '+') {
+        throw std::runtime_error("invalid FASTQ separator");
+    }
+
+    if (!next_line(qual, qual_len)) {
+        throw std::runtime_error("truncated FASTQ record");
+    }
+    if (seq_len != qual_len) {
+        throw std::runtime_error("FASTQ sequence/quality length mismatch");
+    }
     record.qual.assign(qual, qual_len);
     return true;
 }

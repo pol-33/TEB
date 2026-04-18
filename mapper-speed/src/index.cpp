@@ -33,7 +33,7 @@ void write_value(std::ofstream& out, const T& value) {
 std::size_t write_index(const std::string& path,
                         const ReferenceData& reference,
                         const std::vector<OffsetPageMeta>& page_meta,
-                        const std::vector<uint8_t>& dense_pages,
+                        const std::vector<uint8_t>& page_data,
                         const std::vector<uint32_t>& positions) {
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (!out) {
@@ -69,8 +69,8 @@ std::size_t write_index(const std::string& path,
     offset += static_cast<uint64_t>(page_meta.size()) * sizeof(OffsetPageMeta);
     offset = align_up(offset, 64u);
 
-    const uint64_t dense_pages_offset = offset;
-    offset += dense_pages.size();
+    const uint64_t page_data_offset = offset;
+    offset += page_data.size();
     offset = align_up(offset, 64u);
 
     header.positions_offset = offset;
@@ -120,21 +120,21 @@ std::size_t write_index(const std::string& path,
 
     std::vector<OffsetPageMeta> adjusted = page_meta;
     for (auto& meta : adjusted) {
-        if ((meta.flags & kOffsetPageDense) != 0u) {
-            meta.data_offset += dense_pages_offset;
+        if ((meta.flags & (kOffsetPageDense | kOffsetPageSparse)) != 0u) {
+            meta.data_offset += page_data_offset;
         }
     }
     out.write(reinterpret_cast<const char*>(adjusted.data()),
               static_cast<std::streamsize>(adjusted.size() * sizeof(OffsetPageMeta)));
     {
         const uint64_t current = static_cast<uint64_t>(out.tellp());
-        if (current < dense_pages_offset) {
-            std::vector<char> padding(static_cast<std::size_t>(dense_pages_offset - current), 0);
+        if (current < page_data_offset) {
+            std::vector<char> padding(static_cast<std::size_t>(page_data_offset - current), 0);
             out.write(padding.data(), static_cast<std::streamsize>(padding.size()));
         }
     }
 
-    out.write(reinterpret_cast<const char*>(dense_pages.data()), static_cast<std::streamsize>(dense_pages.size()));
+    out.write(reinterpret_cast<const char*>(page_data.data()), static_cast<std::streamsize>(page_data.size()));
     {
         const uint64_t current = static_cast<uint64_t>(out.tellp());
         if (current < header.positions_offset) {
@@ -264,13 +264,33 @@ const uint32_t* IndexView::dense_page_values(const OffsetPageMeta& meta) const {
     return reinterpret_cast<const uint32_t*>(mapping_ + meta.data_offset);
 }
 
+const OffsetTransition* IndexView::sparse_page_records(const OffsetPageMeta& meta) const {
+    return reinterpret_cast<const OffsetTransition*>(mapping_ + meta.data_offset);
+}
+
 uint32_t IndexView::offset_at(uint64_t key) const {
     const OffsetPageMeta& meta = page_meta_for_entry(key);
-    if ((meta.flags & kOffsetPageDense) == 0u) {
+    if ((meta.flags & (kOffsetPageDense | kOffsetPageSparse)) == 0u || meta.record_count == 0u) {
         return meta.base_value;
     }
-    const uint32_t* values = dense_page_values(meta);
-    return values[key & (kOffsetPageSize - 1u)];
+    const uint32_t local = static_cast<uint32_t>(key & (kOffsetPageSize - 1u));
+    if ((meta.flags & kOffsetPageDense) != 0u) {
+        const uint32_t* values = dense_page_values(meta);
+        return values[local];
+    }
+
+    const OffsetTransition* records = sparse_page_records(meta);
+    uint32_t lo = 0;
+    uint32_t hi = meta.record_count;
+    while (lo < hi) {
+        const uint32_t mid = lo + ((hi - lo) >> 1u);
+        if (records[mid].local_entry <= local) {
+            lo = mid + 1u;
+        } else {
+            hi = mid;
+        }
+    }
+    return (lo == 0u) ? meta.base_value : records[lo - 1u].value_after;
 }
 
 uint32_t IndexView::occurrence_count(uint32_t key) const {

@@ -15,13 +15,19 @@ namespace mapper_speed {
 struct OffsetPageMeta {
     uint64_t data_offset = 0;
     uint32_t base_value = 0;
-    uint16_t value_count = 0;
+    uint16_t record_count = 0;
     uint8_t flags = 0;
     uint8_t reserved = 0;
 };
 
 enum OffsetPageFlags : uint8_t {
-    kOffsetPageDense = 1
+    kOffsetPageDense = 1,
+    kOffsetPageSparse = 2
+};
+
+struct __attribute__((packed)) OffsetTransition {
+    uint16_t local_entry = 0;
+    uint32_t value_after = 0;
 };
 
 struct IndexHeader {
@@ -54,14 +60,14 @@ struct StoredChromosome {
 
 struct DenseBuildOutput {
     std::vector<OffsetPageMeta> page_meta;
-    std::vector<uint8_t> dense_pages;
+    std::vector<uint8_t> page_data;
     std::vector<uint32_t> positions;
 };
 
 std::size_t write_index(const std::string& path,
                         const ReferenceData& reference,
                         const std::vector<OffsetPageMeta>& page_meta,
-                        const std::vector<uint8_t>& dense_pages,
+                        const std::vector<uint8_t>& page_data,
                         const std::vector<uint32_t>& positions);
 
 class IndexView {
@@ -94,6 +100,7 @@ public:
 
 private:
     const uint32_t* dense_page_values(const OffsetPageMeta& meta) const;
+    const OffsetTransition* sparse_page_records(const OffsetPageMeta& meta) const;
     const OffsetPageMeta& page_meta_for_entry(uint64_t entry) const;
 
     int fd_ = -1;

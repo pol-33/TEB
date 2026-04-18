@@ -34,6 +34,17 @@ struct CandidateSlot {
     bool occupied = false;
 };
 
+struct CandidateInfo {
+    uint32_t start = 0;
+    uint32_t best_seed_freq = 0xFFFFFFFFu;
+    uint16_t support = 0;
+};
+
+struct PrefilterCandidate {
+    CandidateInfo candidate;
+    int best_score = 0;
+};
+
 class MapperEngine {
 public:
     explicit MapperEngine(const IndexView& index);
@@ -48,13 +59,17 @@ private:
     void generate_candidates(const std::vector<SeedSpec>& seeds,
                              std::size_t read_length,
                              int max_errors,
-                             std::vector<uint32_t>& starts);
+                             std::vector<CandidateInfo>& starts);
     void search_orientation(const std::string& oriented_read,
                             int max_errors,
                             std::vector<AlignmentHit>& hits);
     void maybe_add_hit(std::vector<AlignmentHit>& hits, AlignmentHit&& hit) const;
+    int prefilter_candidate(const std::string& oriented_read,
+                            const MyersQuery& query,
+                            const CandidateInfo& candidate,
+                            int max_errors);
     AlignmentHit verify_candidate(const std::string& oriented_read,
-                                  uint32_t global_start,
+                                  const CandidateInfo& candidate,
                                   int max_errors);
     std::string format_record(const FastqRecord& record, const std::vector<AlignmentHit>& hits) const;
     bool better_hit(const AlignmentHit& lhs, const AlignmentHit& rhs) const;
@@ -65,7 +80,10 @@ private:
     std::string ref_buffer_;
     std::vector<uint32_t> scratch_seed_positions_;
     std::vector<SeedSpec> scratch_seeds_;
-    std::vector<uint32_t> scratch_candidates_;
+    std::vector<CandidateInfo> scratch_candidates_;
+    std::vector<PrefilterCandidate> scratch_prefiltered_;
+    std::vector<int> scratch_banded_prev_;
+    std::vector<int> scratch_banded_curr_;
     std::vector<CandidateSlot> candidate_table_;
 };
 

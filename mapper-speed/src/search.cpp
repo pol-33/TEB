@@ -12,6 +12,8 @@ namespace mapper_speed {
 
 namespace {
 
+constexpr std::size_t kMaxDpFinalistsPerOrientation = 12;
+
 uint32_t encode_seed_at(const std::string& read, uint32_t start, bool& valid) {
     uint32_t key = 0;
     valid = true;
@@ -136,7 +138,7 @@ void MapperEngine::collect_seeds(const std::string& normalized_read,
 void MapperEngine::generate_candidates(const std::vector<SeedSpec>& seeds,
                                        std::size_t read_length,
                                        int max_errors,
-                                       std::vector<uint32_t>& starts) {
+                                       std::vector<CandidateInfo>& starts) {
     starts.clear();
     for (CandidateSlot& slot : candidate_table_) {
         slot.occupied = false;
@@ -213,16 +215,69 @@ void MapperEngine::generate_candidates(const std::vector<SeedSpec>& seeds,
 
     const std::size_t limit = std::min<std::size_t>(kMaxVerifyPerOrientation, ranked.size());
     for (std::size_t i = 0; i < limit; ++i) {
-        starts.push_back(ranked[i].start);
+        starts.push_back(CandidateInfo{
+            ranked[i].start,
+            ranked[i].best_seed_freq,
+            ranked[i].support
+        });
     }
 }
 
+int MapperEngine::prefilter_candidate(const std::string& oriented_read,
+                                      const MyersQuery& query,
+                                      const CandidateInfo& candidate,
+                                      int max_errors) {
+    const uint32_t global_start = candidate.start;
+    const std::size_t chrom_index = index_.chromosome_for_position(global_start);
+    const auto& chrom = index_.chromosome(chrom_index);
+    const uint64_t local_pos = static_cast<uint64_t>(global_start) - chrom.start;
+    const uint32_t min_ref_len = oriented_read.size() > static_cast<std::size_t>(max_errors)
+        ? static_cast<uint32_t>(oriented_read.size() - static_cast<std::size_t>(max_errors))
+        : 1u;
+    const uint32_t max_ref_len = std::min<uint32_t>(
+        static_cast<uint32_t>(oriented_read.size() + static_cast<std::size_t>(max_errors)),
+        chrom.length - static_cast<uint32_t>(local_pos));
+
+    if (min_ref_len > max_ref_len) {
+        return std::numeric_limits<int>::max();
+    }
+
+    int best_score = std::numeric_limits<int>::max();
+    for (uint32_t ref_len = min_ref_len; ref_len <= max_ref_len; ++ref_len) {
+        index_.extract_sequence(global_start, ref_len, ref_buffer_);
+        if (ref_len == oriented_read.size()) {
+            const uint32_t mismatches = count_byte_mismatches_bulk(oriented_read.data(), ref_buffer_.data(), ref_len);
+            if (mismatches == 0u) {
+                return 0;
+            }
+            best_score = std::min(best_score, static_cast<int>(mismatches));
+            if (static_cast<int>(mismatches) <= max_errors) {
+                continue;
+            }
+            const int score = bounded_edit_distance(dispatch_, query, ref_buffer_, max_errors);
+            best_score = std::min(best_score, score);
+        } else {
+            const int score = banded_score_only(oriented_read,
+                                                ref_buffer_,
+                                                max_errors,
+                                                scratch_banded_prev_,
+                                                scratch_banded_curr_);
+            best_score = std::min(best_score, score);
+        }
+        if (best_score == 0) {
+            return 0;
+        }
+    }
+    return best_score;
+}
+
 AlignmentHit MapperEngine::verify_candidate(const std::string& oriented_read,
-                                            uint32_t global_start,
+                                            const CandidateInfo& candidate,
                                             int max_errors) {
     AlignmentHit no_hit;
     no_hit.edit_distance = std::numeric_limits<int>::max();
 
+    const uint32_t global_start = candidate.start;
     const std::size_t chrom_index = index_.chromosome_for_position(global_start);
     const auto& chrom = index_.chromosome(chrom_index);
     const uint64_t local_pos = static_cast<uint64_t>(global_start) - chrom.start;
@@ -240,7 +295,6 @@ AlignmentHit MapperEngine::verify_candidate(const std::string& oriented_read,
     AlignmentHit best_hit = no_hit;
     for (uint32_t ref_len = min_ref_len; ref_len <= max_ref_len; ++ref_len) {
         index_.extract_sequence(global_start, ref_len, ref_buffer_);
-        (void)bounded_edit_distance(dispatch_, oriented_read, ref_buffer_, max_errors);
         AlignmentResult aligned = alignment_workspace_.align(oriented_read, ref_buffer_, max_errors);
         if (aligned.edit_distance > max_errors) {
             continue;
@@ -300,15 +354,40 @@ void MapperEngine::search_orientation(const std::string& oriented_read,
                                       int max_errors,
                                       std::vector<AlignmentHit>& hits) {
     scratch_seeds_.clear();
+    scratch_prefiltered_.clear();
     collect_seeds(oriented_read, max_errors, scratch_seeds_);
     if (scratch_seeds_.empty()) {
         return;
     }
 
+    const MyersQuery query = build_myers_query(oriented_read);
     scratch_candidates_.clear();
     generate_candidates(scratch_seeds_, oriented_read.size(), max_errors, scratch_candidates_);
-    for (uint32_t start : scratch_candidates_) {
-        maybe_add_hit(hits, verify_candidate(oriented_read, start, max_errors));
+
+    for (const CandidateInfo& candidate : scratch_candidates_) {
+        const int best_score = prefilter_candidate(oriented_read, query, candidate, max_errors);
+        if (best_score <= max_errors) {
+            scratch_prefiltered_.push_back(PrefilterCandidate{candidate, best_score});
+        }
+    }
+
+    std::sort(scratch_prefiltered_.begin(), scratch_prefiltered_.end(),
+              [](const PrefilterCandidate& lhs, const PrefilterCandidate& rhs) {
+                  if (lhs.best_score != rhs.best_score) {
+                      return lhs.best_score < rhs.best_score;
+                  }
+                  if (lhs.candidate.support != rhs.candidate.support) {
+                      return lhs.candidate.support > rhs.candidate.support;
+                  }
+                  if (lhs.candidate.best_seed_freq != rhs.candidate.best_seed_freq) {
+                      return lhs.candidate.best_seed_freq < rhs.candidate.best_seed_freq;
+                  }
+                  return lhs.candidate.start < rhs.candidate.start;
+              });
+
+    const std::size_t dp_limit = std::min<std::size_t>(kMaxDpFinalistsPerOrientation, scratch_prefiltered_.size());
+    for (std::size_t i = 0; i < dp_limit; ++i) {
+        maybe_add_hit(hits, verify_candidate(oriented_read, scratch_prefiltered_[i].candidate, max_errors));
     }
 }
 

@@ -12,11 +12,14 @@ namespace mapper_speed {
 
 namespace {
 
-constexpr std::size_t kMaxDpFinalistsPerOrientation = 12;
-constexpr std::size_t kMaxCandidatePrefilterPerOrientation = 24;
+constexpr std::size_t kMaxDpFinalistsPerOrientation = 10;
+constexpr std::size_t kMaxCandidatePrefilterPerOrientation = 20;
 constexpr uint32_t kSeedMinSpacing = 10;
 constexpr uint32_t kNearDuplicateTolerance = 10;
-constexpr uint32_t kSeedNeighborhoodRadius = 3;
+constexpr uint32_t kCandidateClusterSlack = 3;
+constexpr uint32_t kQuickSeedFreq = 8;
+constexpr std::size_t kQuickSeedCount = 3;
+constexpr std::size_t kQuickCandidateLimit = 8;
 
 uint32_t encode_seed_at(const std::string& read, uint32_t start, bool& valid) {
     uint32_t key = 0;
@@ -34,10 +37,10 @@ uint32_t encode_seed_at(const std::string& read, uint32_t start, bool& valid) {
 
 std::size_t target_seed_count(int max_errors) {
     switch (max_errors) {
-        case 0: return 6;
-        case 1: return 8;
-        case 2: return 10;
-        default: return 12;
+        case 0: return 8;
+        case 1: return 10;
+        case 2: return 12;
+        default: return 14;
     }
 }
 
@@ -122,33 +125,17 @@ void MapperEngine::collect_seeds(const std::string& normalized_read,
         return;
     }
 
-    const uint32_t max_start = static_cast<uint32_t>(normalized_read.size() - kSeedLength);
-    for (uint32_t anchor : scratch_seed_positions_) {
-        SeedSpec best_candidate{};
-        best_candidate.frequency = std::numeric_limits<uint32_t>::max();
-
-        const uint32_t begin = (anchor > kSeedNeighborhoodRadius) ? (anchor - kSeedNeighborhoodRadius) : 0u;
-        const uint32_t end = std::min<uint32_t>(max_start, anchor + kSeedNeighborhoodRadius);
-        for (uint32_t pos = begin; pos <= end; ++pos) {
-            bool valid = false;
-            const uint32_t key = encode_seed_at(normalized_read, pos, valid);
-            if (!valid) {
-                continue;
-            }
-            const uint32_t freq = index_.occurrence_count(key);
-            if (freq == 0 || freq > kHighFreqAllowFallback) {
-                continue;
-            }
-            SeedSpec candidate{pos, key, freq};
-            if (candidate.frequency < best_candidate.frequency ||
-                (candidate.frequency == best_candidate.frequency && candidate.read_offset < best_candidate.read_offset)) {
-                best_candidate = candidate;
-            }
+    for (uint32_t pos : scratch_seed_positions_) {
+        bool valid = false;
+        const uint32_t key = encode_seed_at(normalized_read, pos, valid);
+        if (!valid) {
+            continue;
         }
-
-        if (best_candidate.frequency != std::numeric_limits<uint32_t>::max()) {
-            scratch_seed_candidates_.push_back(best_candidate);
+        const uint32_t freq = index_.occurrence_count(key);
+        if (freq == 0 || freq > kHighFreqAllowFallback) {
+            continue;
         }
+        scratch_seed_candidates_.push_back(SeedSpec{pos, key, freq});
     }
 
     if (scratch_seed_candidates_.empty()) {
@@ -208,6 +195,84 @@ void MapperEngine::collect_seeds(const std::string& normalized_read,
                                 return lhs.read_offset == rhs.read_offset && lhs.key == rhs.key;
                             }),
                 seeds.end());
+}
+
+bool MapperEngine::try_upfront_exactish(const std::string& oriented_read,
+                                        int max_errors,
+                                        const std::vector<SeedSpec>& seeds,
+                                        std::vector<AlignmentHit>& hits) {
+    if (max_errors > 1 || seeds.empty()) {
+        return false;
+    }
+
+    scratch_candidates_.clear();
+    const std::size_t seed_limit = std::min<std::size_t>(kQuickSeedCount, seeds.size());
+    for (std::size_t i = 0; i < seed_limit; ++i) {
+        const SeedSpec& seed = seeds[i];
+        if (seed.frequency > kQuickSeedFreq) {
+            break;
+        }
+        const auto range = index_.positions_for(seed.key);
+        for (const uint32_t* it = range.first; it != range.second; ++it) {
+            const int64_t candidate_start = static_cast<int64_t>(*it) - static_cast<int64_t>(seed.read_offset);
+            if (candidate_start < 0) {
+                continue;
+            }
+            const uint32_t start = static_cast<uint32_t>(candidate_start);
+            if (!index_.stays_within_chromosome(start, static_cast<uint32_t>(oriented_read.size()))) {
+                continue;
+            }
+            scratch_candidates_.push_back(CandidateInfo{start, seed.frequency, 1});
+        }
+    }
+
+    if (scratch_candidates_.empty()) {
+        return false;
+    }
+
+    std::sort(scratch_candidates_.begin(), scratch_candidates_.end(),
+              [](const CandidateInfo& lhs, const CandidateInfo& rhs) {
+                  if (lhs.start != rhs.start) {
+                      return lhs.start < rhs.start;
+                  }
+                  return lhs.best_seed_freq < rhs.best_seed_freq;
+              });
+    scratch_candidates_.erase(std::unique(scratch_candidates_.begin(), scratch_candidates_.end(),
+                                          [](const CandidateInfo& lhs, const CandidateInfo& rhs) {
+                                              return lhs.start == rhs.start;
+                                          }),
+                              scratch_candidates_.end());
+
+    const std::size_t limit = std::min<std::size_t>(kQuickCandidateLimit, scratch_candidates_.size());
+    for (std::size_t i = 0; i < limit; ++i) {
+        const CandidateInfo& candidate = scratch_candidates_[i];
+        const std::size_t chrom_index = index_.chromosome_for_position(candidate.start);
+        const auto& chrom = index_.chromosome(chrom_index);
+        const uint64_t local_pos = static_cast<uint64_t>(candidate.start) - chrom.start;
+        index_.extract_sequence(candidate.start, static_cast<uint32_t>(oriented_read.size()), ref_buffer_);
+        const uint32_t mismatches =
+            count_byte_mismatches_bulk(oriented_read.data(), ref_buffer_.data(), oriented_read.size());
+        if (static_cast<int>(mismatches) > max_errors) {
+            continue;
+        }
+
+        AlignmentHit hit;
+        hit.chrom_index = chrom_index;
+        hit.global_pos = candidate.start;
+        hit.ref_pos_1based = static_cast<uint32_t>(local_pos + 1u);
+        hit.edit_distance = static_cast<int>(mismatches);
+        hit.cigar = std::to_string(oriented_read.size()) + "M";
+        maybe_add_hit(hits, std::move(hit));
+
+        if (mismatches == 0u) {
+            return true;
+        }
+        if (hits.size() >= 2u && hits.back().edit_distance <= 1) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 void MapperEngine::generate_candidates(const std::vector<SeedSpec>& seeds,
@@ -278,9 +343,53 @@ void MapperEngine::generate_candidates(const std::vector<SeedSpec>& seeds,
         }
     }
 
+    struct CandidateCluster {
+        uint32_t start = 0;
+        uint32_t best_seed_freq = 0xFFFFFFFFu;
+        uint16_t support_sum = 0;
+        uint16_t best_member_support = 0;
+        std::size_t chrom_index = 0;
+    };
+
     std::sort(ranked.begin(), ranked.end(), [](const CandidateSlot& lhs, const CandidateSlot& rhs) {
-        if (lhs.support != rhs.support) {
-            return lhs.support > rhs.support;
+        return lhs.start < rhs.start;
+    });
+
+    std::vector<CandidateCluster> clustered;
+    clustered.reserve(ranked.size());
+    const uint32_t cluster_window = static_cast<uint32_t>(max_errors) + kCandidateClusterSlack;
+    for (const CandidateSlot& slot : ranked) {
+        const std::size_t chrom_index = index_.chromosome_for_position(slot.start);
+        if (!clustered.empty()) {
+            CandidateCluster& cluster = clustered.back();
+            if (cluster.chrom_index == chrom_index &&
+                slot.start >= cluster.start &&
+                slot.start - cluster.start <= cluster_window) {
+                const uint32_t merged_support = static_cast<uint32_t>(cluster.support_sum) + slot.support;
+                cluster.support_sum = static_cast<uint16_t>(std::min<uint32_t>(merged_support, 0xFFFFu));
+                cluster.best_seed_freq = std::min(cluster.best_seed_freq, slot.best_seed_freq);
+                if (slot.support > cluster.best_member_support ||
+                    (slot.support == cluster.best_member_support && slot.best_seed_freq < cluster.best_seed_freq) ||
+                    (slot.support == cluster.best_member_support && slot.best_seed_freq == cluster.best_seed_freq &&
+                     slot.start < cluster.start)) {
+                    cluster.start = slot.start;
+                    cluster.best_member_support = slot.support;
+                }
+                continue;
+            }
+        }
+        clustered.push_back(CandidateCluster{
+            slot.start,
+            slot.best_seed_freq,
+            slot.support,
+            slot.support,
+            chrom_index
+        });
+    }
+
+    std::sort(clustered.begin(), clustered.end(), [](const CandidateCluster& lhs, const CandidateCluster& rhs) {
+        if (lhs.support_sum != rhs.support_sum) {
+            return lhs.support_sum > rhs.support_sum;
         }
         if (lhs.best_seed_freq != rhs.best_seed_freq) {
             return lhs.best_seed_freq < rhs.best_seed_freq;
@@ -288,18 +397,12 @@ void MapperEngine::generate_candidates(const std::vector<SeedSpec>& seeds,
         return lhs.start < rhs.start;
     });
 
-    const uint16_t best_support = ranked.empty() ? 0u : ranked.front().support;
-    const uint16_t support_floor = (best_support >= 3u) ? static_cast<uint16_t>(best_support - 1u) : best_support;
-
-    const std::size_t limit = std::min<std::size_t>(kMaxVerifyPerOrientation, ranked.size());
+    const std::size_t limit = std::min<std::size_t>(kMaxVerifyPerOrientation, clustered.size());
     for (std::size_t i = 0; i < limit; ++i) {
-        if (ranked[i].support < support_floor) {
-            break;
-        }
         starts.push_back(CandidateInfo{
-            ranked[i].start,
-            ranked[i].best_seed_freq,
-            ranked[i].support
+            clustered[i].start,
+            clustered[i].best_seed_freq,
+            clustered[i].support_sum
         });
     }
 }
@@ -332,6 +435,9 @@ int MapperEngine::prefilter_candidate(const std::string& oriented_read,
                 return 0;
             }
             best_score = std::min(best_score, static_cast<int>(mismatches));
+            if (mismatches <= 1u) {
+                return static_cast<int>(mismatches);
+            }
             if (static_cast<int>(mismatches) <= max_errors) {
                 continue;
             }
@@ -374,6 +480,19 @@ AlignmentHit MapperEngine::verify_candidate(const std::string& oriented_read,
     }
 
     AlignmentHit best_hit = no_hit;
+    if (index_.stays_within_chromosome(global_start, static_cast<uint32_t>(oriented_read.size()))) {
+        index_.extract_sequence(global_start, static_cast<uint32_t>(oriented_read.size()), ref_buffer_);
+        const uint32_t mismatches =
+            count_byte_mismatches_bulk(oriented_read.data(), ref_buffer_.data(), oriented_read.size());
+        if (mismatches <= 1u) {
+            best_hit.chrom_index = chrom_index;
+            best_hit.global_pos = global_start;
+            best_hit.ref_pos_1based = static_cast<uint32_t>(local_pos + 1u);
+            best_hit.edit_distance = static_cast<int>(mismatches);
+            best_hit.cigar = std::to_string(oriented_read.size()) + "M";
+            return best_hit;
+        }
+    }
     for (uint32_t ref_len = min_ref_len; ref_len <= max_ref_len; ++ref_len) {
         index_.extract_sequence(global_start, ref_len, ref_buffer_);
         AlignmentResult aligned = alignment_workspace_.align(oriented_read, ref_buffer_, max_errors);
@@ -449,6 +568,9 @@ void MapperEngine::search_orientation(const std::string& oriented_read,
     scratch_prefiltered_.clear();
     collect_seeds(oriented_read, max_errors, scratch_seeds_);
     if (scratch_seeds_.empty()) {
+        return;
+    }
+    if (try_upfront_exactish(oriented_read, max_errors, scratch_seeds_, hits)) {
         return;
     }
 

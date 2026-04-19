@@ -56,6 +56,10 @@ private:
     void collect_seeds(const std::string& normalized_read,
                        int max_errors,
                        std::vector<SeedSpec>& seeds);
+    bool try_upfront_exactish(const std::string& oriented_read,
+                              int max_errors,
+                              const std::vector<SeedSpec>& seeds,
+                              std::vector<AlignmentHit>& hits);
     void generate_candidates(const std::vector<SeedSpec>& seeds,
                              std::size_t read_length,
                              int max_errors,

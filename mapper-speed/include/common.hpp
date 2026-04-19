@@ -44,6 +44,40 @@ inline uint64_t fnv1a_init() {
     return 1469598103934665603ULL;
 }
 
+enum class SimdLevel : uint8_t {
+    kGeneric = 0,
+    kAvx2 = 1,
+    kAvx512 = 2
+};
+
+inline SimdLevel detect_simd_level() {
+#if defined(__x86_64__) || defined(__i386__)
+    static const SimdLevel level = []() {
+        if (__builtin_cpu_supports("avx512f") &&
+            __builtin_cpu_supports("avx512bw") &&
+            __builtin_cpu_supports("avx512vl") &&
+            __builtin_cpu_supports("popcnt")) {
+            return SimdLevel::kAvx512;
+        }
+        if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("popcnt")) {
+            return SimdLevel::kAvx2;
+        }
+        return SimdLevel::kGeneric;
+    }();
+    return level;
+#else
+    return SimdLevel::kGeneric;
+#endif
+}
+
+inline const char* active_simd_name() {
+    switch (detect_simd_level()) {
+        case SimdLevel::kAvx512: return "avx512";
+        case SimdLevel::kAvx2: return "avx2";
+        default: return "generic";
+    }
+}
+
 // Bulk byte mismatch counter using 64-bit SWAR.
 // For each 8-byte chunk, XOR reveals differing bytes; zero-byte detection then
 // counts equal bytes without branching, and popcount turns that into totals.
@@ -96,27 +130,51 @@ static inline uint32_t count_byte_mismatches_avx512(const char* lhs, const char*
     }
     return mismatches + count_byte_mismatches_swar(lhs + i, rhs + i, len - i);
 }
+
+__attribute__((target("avx2,popcnt")))
+static inline uint32_t count_gc_bases_avx2(const char* data, std::size_t len) {
+    uint32_t gc = 0;
+    std::size_t i = 0;
+    const __m256i g = _mm256_set1_epi8('G');
+    const __m256i c = _mm256_set1_epi8('C');
+    for (; i + 32u <= len; i += 32u) {
+        const __m256i x = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(data + i));
+        const __m256i is_g = _mm256_cmpeq_epi8(x, g);
+        const __m256i is_c = _mm256_cmpeq_epi8(x, c);
+        const uint32_t mask =
+            static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_or_si256(is_g, is_c)));
+        gc += static_cast<uint32_t>(__builtin_popcount(mask));
+    }
+    return gc;
+}
+
+__attribute__((target("avx512bw,avx512vl,popcnt")))
+static inline uint32_t count_gc_bases_avx512(const char* data, std::size_t len) {
+    uint32_t gc = 0;
+    std::size_t i = 0;
+    const __m512i g = _mm512_set1_epi8('G');
+    const __m512i c = _mm512_set1_epi8('C');
+    for (; i + 64u <= len; i += 64u) {
+        const __m512i x = _mm512_loadu_si512(reinterpret_cast<const void*>(data + i));
+        const uint64_t mask_g = _mm512_cmpeq_epi8_mask(x, g);
+        const uint64_t mask_c = _mm512_cmpeq_epi8_mask(x, c);
+        gc += static_cast<uint32_t>(__builtin_popcountll(mask_g | mask_c));
+    }
+    return gc;
+}
 #endif
 
 inline uint32_t count_byte_mismatches_bulk(const char* lhs, const char* rhs, std::size_t len) {
+    switch (detect_simd_level()) {
 #if defined(__x86_64__) || defined(__i386__)
-    static const int level = []() {
-        if (__builtin_cpu_supports("avx512bw") && __builtin_cpu_supports("avx512vl")) {
-            return 2;
-        }
-        if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("popcnt")) {
-            return 1;
-        }
-        return 0;
-    }();
-    if (level == 2) {
-        return count_byte_mismatches_avx512(lhs, rhs, len);
-    }
-    if (level == 1) {
-        return count_byte_mismatches_avx2(lhs, rhs, len);
-    }
+        case SimdLevel::kAvx512:
+            return count_byte_mismatches_avx512(lhs, rhs, len);
+        case SimdLevel::kAvx2:
+            return count_byte_mismatches_avx2(lhs, rhs, len);
 #endif
-    return count_byte_mismatches_swar(lhs, rhs, len);
+        default:
+            return count_byte_mismatches_swar(lhs, rhs, len);
+    }
 }
 
 // Bulk GC counter: processes 8 bases per CPU cycle using 64-bit word tricks.
@@ -124,6 +182,16 @@ inline uint32_t count_byte_mismatches_bulk(const char* lhs, const char* rhs, std
 // Strategy: extract bit0 and bit1 of every byte independently, AND them,
 // then popcount — each byte with both bits set contributes exactly 1.
 inline uint32_t count_gc_bases_bulk(const char* data, std::size_t len) {
+#if defined(__x86_64__) || defined(__i386__)
+    if (detect_simd_level() == SimdLevel::kAvx512) {
+        const std::size_t simd_len = len & ~std::size_t{63};
+        return count_gc_bases_avx512(data, simd_len) + count_gc_bases_bulk(data + simd_len, len - simd_len);
+    }
+    if (detect_simd_level() == SimdLevel::kAvx2) {
+        const std::size_t simd_len = len & ~std::size_t{31};
+        return count_gc_bases_avx2(data, simd_len) + count_gc_bases_bulk(data + simd_len, len - simd_len);
+    }
+#endif
     constexpr uint64_t kBit0 = UINT64_C(0x0101010101010101);
     uint32_t gc = 0;
     std::size_t i = 0;

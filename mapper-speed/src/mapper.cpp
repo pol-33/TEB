@@ -62,7 +62,8 @@ int main(int argc, char* argv[]) {
 
         std::cerr << "[mapper] loaded index with " << index.chromosome_count() << " chromosomes, "
                   << index.positions_count() << " indexed seeds\n";
-        std::cerr << "[mapper] single-thread verifier dispatch ready\n";
+        std::cerr << "[mapper] single-thread verifier dispatch ready"
+                  << " (simd=" << mapper_speed::active_simd_name() << ")\n";
 
         mapper_speed::FastqRecord record;
         uint64_t processed = 0;

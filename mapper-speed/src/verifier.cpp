@@ -5,6 +5,8 @@
 #include <limits>
 #include <vector>
 
+#include "common.hpp"
+
 namespace mapper_speed {
 
 namespace {
@@ -96,7 +98,7 @@ int myers_popcnt(const MyersQuery& query, std::string_view ref, int max_errors) 
     return myers128_impl<true>(query, ref, max_errors);
 }
 
-__attribute__((target("avx512bw,avx512vl,avx512vbmi2,popcnt,bmi2")))
+__attribute__((target("avx512f,avx512bw,avx512vl,popcnt,bmi2")))
 int myers_avx512(const MyersQuery& query, std::string_view ref, int max_errors) {
     return myers128_impl<true>(query, ref, max_errors);
 }
@@ -109,11 +111,10 @@ MyersDispatch resolve_myers_dispatch() {
     dispatch.selected = &myers_generic;
     dispatch.name = "generic";
 #if defined(__x86_64__) || defined(__i386__)
-    if (__builtin_cpu_supports("avx512bw") && __builtin_cpu_supports("avx512vl") &&
-        __builtin_cpu_supports("avx512vbmi2") && __builtin_cpu_supports("bmi2")) {
+    if (detect_simd_level() == SimdLevel::kAvx512 && __builtin_cpu_supports("bmi2")) {
         dispatch.selected = &myers_avx512;
         dispatch.name = "avx512";
-    } else if (__builtin_cpu_supports("bmi2") && __builtin_cpu_supports("popcnt")) {
+    } else if (detect_simd_level() == SimdLevel::kAvx2 && __builtin_cpu_supports("bmi2")) {
         dispatch.selected = &myers_popcnt;
         dispatch.name = "popcnt+bmi2";
     }

@@ -16,13 +16,14 @@
 namespace mapper_speed {
 
 constexpr uint32_t kSeedLength = 16;
+constexpr uint32_t kIndexVersion = 2;
+constexpr uint32_t kIndexStride = 4;
 constexpr uint32_t kOffsetPageShift = 12;
 constexpr uint32_t kOffsetPageSize = 1u << kOffsetPageShift;
 constexpr uint64_t kOffsetEntryCount = (uint64_t{1} << (2 * kSeedLength)) + 1u;
 constexpr uint32_t kHighFreqSkip = 64;
 constexpr uint32_t kHighFreqAllowFallback = 512;
 constexpr uint32_t kMaxVerifyPerOrientation = 64;
-constexpr uint32_t kCandidateTableSize = 8192;
 constexpr uint32_t kMaxReadForMyers = 128;
 
 inline uint64_t align_up(uint64_t value, uint64_t alignment) {

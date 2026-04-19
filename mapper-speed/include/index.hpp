@@ -32,10 +32,10 @@ struct __attribute__((packed)) OffsetTransition {
 
 struct IndexHeader {
     char magic[8];
-    uint32_t version = 1;
+    uint32_t version = kIndexVersion;
     uint32_t seed_length = kSeedLength;
     uint32_t page_shift = kOffsetPageShift;
-    uint32_t flags = 0;
+    uint32_t flags = kIndexStride;
     uint64_t checksum = 0;
     uint32_t genome_length = 0;
     uint32_t chromosome_count = 0;

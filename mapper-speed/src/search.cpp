@@ -37,10 +37,10 @@ uint32_t encode_seed_at(const std::string& read, uint32_t start, bool& valid) {
 
 std::size_t target_seed_count(int max_errors) {
     switch (max_errors) {
-        case 0: return 8;
-        case 1: return 10;
-        case 2: return 12;
-        default: return 14;
+        case 0: return 10;
+        case 1: return 12;
+        case 2: return 14;
+        default: return 16;
     }
 }
 
@@ -76,41 +76,18 @@ void MapperEngine::collect_seed_positions(std::size_t read_length,
 
     const uint32_t max_start = static_cast<uint32_t>(read_length - kSeedLength);
     const std::size_t target = std::min<std::size_t>(target_seed_count(max_errors), static_cast<std::size_t>(max_start) + 1u);
-    const uint32_t partitions = static_cast<uint32_t>(std::max(1, max_errors + 1));
-
-    positions.push_back(0);
-    positions.push_back(max_start);
-    for (uint32_t i = 0; i < partitions; ++i) {
-        const uint32_t left = static_cast<uint32_t>((static_cast<uint64_t>(i) * max_start) / partitions);
-        const uint32_t right = static_cast<uint32_t>((static_cast<uint64_t>(i + 1u) * max_start) / partitions);
-        positions.push_back(left);
-        positions.push_back((left + right) / 2u);
-        positions.push_back(right);
+    if (target <= 1u) {
+        positions.push_back(0);
+        return;
     }
 
+    positions.reserve(target);
+    for (std::size_t i = 0; i < target; ++i) {
+        const uint64_t numerator = static_cast<uint64_t>(i) * max_start + (target - 1u) / 2u;
+        positions.push_back(static_cast<uint32_t>(numerator / (target - 1u)));
+    }
     std::sort(positions.begin(), positions.end());
     positions.erase(std::unique(positions.begin(), positions.end()), positions.end());
-
-    if (positions.size() > target) {
-        std::vector<uint32_t> trimmed;
-        trimmed.reserve(target);
-        for (std::size_t i = 0; i < target; ++i) {
-            const std::size_t idx = (i * (positions.size() - 1u)) / (target - 1u);
-            trimmed.push_back(positions[idx]);
-        }
-        std::sort(trimmed.begin(), trimmed.end());
-        trimmed.erase(std::unique(trimmed.begin(), trimmed.end()), trimmed.end());
-        positions.swap(trimmed);
-    }
-
-    if (positions.size() < target) {
-        for (uint32_t pos = 0; pos <= max_start && positions.size() < target; ++pos) {
-            if (!std::binary_search(positions.begin(), positions.end(), pos)) {
-                positions.push_back(pos);
-            }
-        }
-        std::sort(positions.begin(), positions.end());
-    }
 }
 
 void MapperEngine::collect_seeds(const std::string& normalized_read,
@@ -289,15 +266,18 @@ void MapperEngine::generate_candidates(const std::vector<SeedSpec>& seeds,
         const SeedSpec& seed = seeds[seed_index];
         const auto range = index_.positions_for(seed.key);
         for (const uint32_t* it = range.first; it != range.second; ++it) {
-            const int64_t candidate = static_cast<int64_t>(*it) - static_cast<int64_t>(seed.read_offset);
-            if (candidate < 0) {
-                continue;
+            const int64_t base_candidate = static_cast<int64_t>(*it) - static_cast<int64_t>(seed.read_offset);
+            for (int delta = -max_errors; delta <= max_errors; ++delta) {
+                const int64_t candidate = base_candidate + delta;
+                if (candidate < 0) {
+                    continue;
+                }
+                const uint32_t start = static_cast<uint32_t>(candidate);
+                if (static_cast<uint64_t>(start) + min_ref_len > index_.genome_length()) {
+                    continue;
+                }
+                scratch_anchors_.push_back(SeedAnchor{start, seed_index, 0});
             }
-            const uint32_t start = static_cast<uint32_t>(candidate);
-            if (static_cast<uint64_t>(start) + min_ref_len > index_.genome_length()) {
-                continue;
-            }
-            scratch_anchors_.push_back(SeedAnchor{start, seed_index, 0});
         }
     }
 

@@ -73,7 +73,10 @@ void for_each_valid_seed(const mapper_speed::ReferenceData& reference, Callback&
                 ++valid_run;
             }
             if (valid_run >= mapper_speed::kSeedLength) {
-                callback(rolling_key, global - mapper_speed::kSeedLength + 1u);
+                const uint32_t start = global - mapper_speed::kSeedLength + 1u;
+                if ((start % mapper_speed::kIndexStride) == 0u) {
+                    callback(rolling_key, start);
+                }
             }
         }
     }
@@ -155,6 +158,8 @@ public:
         }
 
         std::memcpy(header_.magic, "MSPDIDX1", 8u);
+        header_.version = mapper_speed::kIndexVersion;
+        header_.flags = mapper_speed::kIndexStride;
         header_.checksum = reference.checksum;
         header_.genome_length = reference.genome_length;
         header_.chromosome_count = static_cast<uint32_t>(reference.chromosomes.size());
@@ -392,7 +397,7 @@ int main(int argc, char* argv[]) {
         const uint32_t bucket_count = uint32_t{1} << bucket_bits;
 
         std::cerr << "[indexer] build mode: compact-page-transitions (multipass-" << bucket_count
-                  << "-bucket)\n";
+                  << "-bucket, stride-" << mapper_speed::kIndexStride << ")\n";
 
         const std::size_t bytes = build_multipass_index(reference, cfg.index_path, valid_positions, bucket_bits);
 

@@ -177,21 +177,7 @@ inline uint32_t count_byte_mismatches_bulk(const char* lhs, const char* rhs, std
     }
 }
 
-// Bulk GC counter: processes 8 bases per CPU cycle using 64-bit word tricks.
-// For each byte, G(0x47) and C(0x43) have bits[1:0]==0b11; A, T, N do not.
-// Strategy: extract bit0 and bit1 of every byte independently, AND them,
-// then popcount — each byte with both bits set contributes exactly 1.
-inline uint32_t count_gc_bases_bulk(const char* data, std::size_t len) {
-#if defined(__x86_64__) || defined(__i386__)
-    if (detect_simd_level() == SimdLevel::kAvx512) {
-        const std::size_t simd_len = len & ~std::size_t{63};
-        return count_gc_bases_avx512(data, simd_len) + count_gc_bases_bulk(data + simd_len, len - simd_len);
-    }
-    if (detect_simd_level() == SimdLevel::kAvx2) {
-        const std::size_t simd_len = len & ~std::size_t{31};
-        return count_gc_bases_avx2(data, simd_len) + count_gc_bases_bulk(data + simd_len, len - simd_len);
-    }
-#endif
+inline uint32_t count_gc_bases_swar(const char* data, std::size_t len) {
     constexpr uint64_t kBit0 = UINT64_C(0x0101010101010101);
     uint32_t gc = 0;
     std::size_t i = 0;
@@ -206,6 +192,24 @@ inline uint32_t count_gc_bases_bulk(const char* data, std::size_t len) {
         gc += static_cast<uint32_t>((static_cast<uint8_t>(data[i]) & 0x3u) == 0x3u);
     }
     return gc;
+}
+
+// Bulk GC counter: processes 8 bases per CPU cycle using 64-bit word tricks.
+// For each byte, G(0x47) and C(0x43) have bits[1:0]==0b11; A, T, N do not.
+// Strategy: extract bit0 and bit1 of every byte independently, AND them,
+// then popcount — each byte with both bits set contributes exactly 1.
+inline uint32_t count_gc_bases_bulk(const char* data, std::size_t len) {
+#if defined(__x86_64__) || defined(__i386__)
+    if (detect_simd_level() == SimdLevel::kAvx512) {
+        const std::size_t simd_len = len & ~std::size_t{63};
+        return count_gc_bases_avx512(data, simd_len) + count_gc_bases_swar(data + simd_len, len - simd_len);
+    }
+    if (detect_simd_level() == SimdLevel::kAvx2) {
+        const std::size_t simd_len = len & ~std::size_t{31};
+        return count_gc_bases_avx2(data, simd_len) + count_gc_bases_swar(data + simd_len, len - simd_len);
+    }
+#endif
+    return count_gc_bases_swar(data, len);
 }
 
 inline double bytes_to_mebibytes(uint64_t bytes) {

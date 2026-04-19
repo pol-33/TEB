@@ -64,6 +64,9 @@ struct DenseBuildOutput {
     std::vector<uint32_t> positions;
 };
 
+inline constexpr uint32_t kChromLookupShift = 20;
+inline constexpr uint32_t kChromLookupBinSize = 1u << kChromLookupShift;
+
 std::size_t write_index(const std::string& path,
                         const ReferenceData& reference,
                         const std::vector<OffsetPageMeta>& page_meta,
@@ -109,6 +112,7 @@ private:
     uint8_t* mapping_ = nullptr;
     IndexHeader header_{};
     std::vector<ChromosomeRecord> chromosomes_;
+    std::vector<uint16_t> chrom_lookup_bins_;
     const uint8_t* packed_reference_ = nullptr;
     const uint64_t* n_mask_ = nullptr;
     const OffsetPageMeta* page_meta_ = nullptr;

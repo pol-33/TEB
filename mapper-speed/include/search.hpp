@@ -31,6 +31,7 @@ struct CandidateInfo {
     uint32_t start = 0;
     uint32_t best_seed_freq = 0xFFFFFFFFu;
     uint16_t support = 0;
+    uint16_t chrom_index = 0;
 };
 
 struct PrefilterCandidate {
@@ -82,6 +83,8 @@ private:
     AlignmentWorkspace alignment_workspace_;
     std::string ref_buffer_;
     std::vector<uint32_t> scratch_seed_positions_;
+    std::vector<uint32_t> scratch_seed_keys_;
+    std::vector<uint8_t> scratch_seed_valid_;
     std::vector<SeedSpec> scratch_seed_candidates_;
     std::vector<SeedSpec> scratch_seeds_;
     std::vector<SeedAnchor> scratch_anchors_;

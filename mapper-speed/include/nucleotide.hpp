@@ -1,8 +1,10 @@
 #ifndef MAPPER_SPEED_NUCLEOTIDE_HPP
 #define MAPPER_SPEED_NUCLEOTIDE_HPP
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -19,39 +21,92 @@ inline constexpr uint8_t kAsciiToCode[32] = {
 
 inline constexpr char kCodeToBase[4] = {'A', 'C', 'G', 'T'};
 
+inline const uint8_t* ascii_to_code_table() {
+    static uint8_t table[256] = {};
+    static bool initialized = false;
+    if (!initialized) {
+        std::fill(std::begin(table), std::end(table), kBaseCodeInvalid);
+        for (int c : {'A', 'a'}) table[static_cast<uint8_t>(c)] = 0;
+        for (int c : {'C', 'c'}) table[static_cast<uint8_t>(c)] = 1;
+        for (int c : {'G', 'g'}) table[static_cast<uint8_t>(c)] = 2;
+        for (int c : {'T', 't'}) table[static_cast<uint8_t>(c)] = 3;
+        initialized = true;
+    }
+    return table;
+}
+
+inline const char* normalize_ascii_table() {
+    static char table[256] = {};
+    static bool initialized = false;
+    if (!initialized) {
+        std::fill(std::begin(table), std::end(table), 'N');
+        table[static_cast<uint8_t>('A')] = table[static_cast<uint8_t>('a')] = 'A';
+        table[static_cast<uint8_t>('C')] = table[static_cast<uint8_t>('c')] = 'C';
+        table[static_cast<uint8_t>('G')] = table[static_cast<uint8_t>('g')] = 'G';
+        table[static_cast<uint8_t>('T')] = table[static_cast<uint8_t>('t')] = 'T';
+        initialized = true;
+    }
+    return table;
+}
+
+inline const char* complement_ascii_table() {
+    static char table[256] = {};
+    static bool initialized = false;
+    if (!initialized) {
+        std::fill(std::begin(table), std::end(table), 'N');
+        table[static_cast<uint8_t>('A')] = table[static_cast<uint8_t>('a')] = 'T';
+        table[static_cast<uint8_t>('C')] = table[static_cast<uint8_t>('c')] = 'G';
+        table[static_cast<uint8_t>('G')] = table[static_cast<uint8_t>('g')] = 'C';
+        table[static_cast<uint8_t>('T')] = table[static_cast<uint8_t>('t')] = 'A';
+        initialized = true;
+    }
+    return table;
+}
+
 inline uint8_t base_to_code(char base) {
-    return kAsciiToCode[(static_cast<uint8_t>(base) & static_cast<uint8_t>(~0x20)) & 0x1F];
+    return ascii_to_code_table()[static_cast<uint8_t>(base)];
 }
 
 inline char normalize_base(char base) {
-    const uint8_t code = base_to_code(base);
-    return (code == kBaseCodeInvalid) ? 'N' : kCodeToBase[code];
+    return normalize_ascii_table()[static_cast<uint8_t>(base)];
 }
 
 inline char complement_base(char base) {
-    switch (normalize_base(base)) {
-        case 'A': return 'T';
-        case 'C': return 'G';
-        case 'G': return 'C';
-        case 'T': return 'A';
-        default: return 'N';
-    }
+    return complement_ascii_table()[static_cast<uint8_t>(base)];
 }
 
 inline std::string normalize_sequence(const std::string& sequence) {
     std::string out(sequence.size(), 'N');
+    const char* table = normalize_ascii_table();
     for (std::size_t i = 0; i < sequence.size(); ++i) {
-        out[i] = normalize_base(sequence[i]);
+        out[i] = table[static_cast<uint8_t>(sequence[i])];
     }
     return out;
 }
 
 inline std::string reverse_complement(const std::string& sequence) {
     std::string out(sequence.size(), 'N');
+    const char* table = complement_ascii_table();
     for (std::size_t i = 0; i < sequence.size(); ++i) {
-        out[i] = complement_base(sequence[sequence.size() - 1 - i]);
+        out[i] = table[static_cast<uint8_t>(sequence[sequence.size() - 1 - i])];
     }
     return out;
+}
+
+inline void normalize_and_reverse_complement(const std::string& sequence,
+                                             std::string& normalized,
+                                             std::string& reverse_comp) {
+    normalized.resize(sequence.size());
+    reverse_comp.resize(sequence.size());
+    const char* normalize_table = normalize_ascii_table();
+    const char* complement_table = complement_ascii_table();
+    const std::size_t n = sequence.size();
+    for (std::size_t i = 0; i < n; ++i) {
+        const uint8_t front = static_cast<uint8_t>(sequence[i]);
+        const uint8_t back = static_cast<uint8_t>(sequence[n - 1u - i]);
+        normalized[i] = normalize_table[front];
+        reverse_comp[i] = complement_table[back];
+    }
 }
 
 inline std::size_t packed_base_bytes(std::size_t n) {

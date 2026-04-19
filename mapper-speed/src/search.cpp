@@ -21,20 +21,6 @@ constexpr uint32_t kQuickSeedFreq = 8;
 constexpr std::size_t kQuickSeedCount = 3;
 constexpr std::size_t kQuickCandidateLimit = 8;
 
-uint32_t encode_seed_at(const std::string& read, uint32_t start, bool& valid) {
-    uint32_t key = 0;
-    valid = true;
-    for (uint32_t i = 0; i < kSeedLength; ++i) {
-        const uint8_t code = base_to_code(read[start + i]);
-        if (code == kBaseCodeInvalid) {
-            valid = false;
-            return 0;
-        }
-        key = (key << 2u) | code;
-    }
-    return key;
-}
-
 std::size_t target_seed_count(int max_errors) {
     switch (max_errors) {
         case 0: return 10;
@@ -106,12 +92,34 @@ void MapperEngine::collect_seeds(const std::string& normalized_read,
         return;
     }
 
-    for (uint32_t pos : scratch_seed_positions_) {
-        bool valid = false;
-        const uint32_t key = encode_seed_at(normalized_read, pos, valid);
-        if (!valid) {
+    const uint32_t max_start = static_cast<uint32_t>(normalized_read.size() - kSeedLength);
+    scratch_seed_keys_.assign(max_start + 1u, 0u);
+    scratch_seed_valid_.assign(max_start + 1u, 0u);
+    uint32_t rolling_key = 0;
+    uint32_t valid_run = 0;
+    for (uint32_t i = 0; i < normalized_read.size(); ++i) {
+        const uint8_t code = base_to_code(normalized_read[i]);
+        if (code == kBaseCodeInvalid) {
+            rolling_key = 0;
+            valid_run = 0;
             continue;
         }
+        rolling_key = (rolling_key << 2u) | code;
+        if (valid_run < kSeedLength) {
+            ++valid_run;
+        }
+        if (valid_run >= kSeedLength) {
+            const uint32_t start = i - kSeedLength + 1u;
+            scratch_seed_keys_[start] = rolling_key;
+            scratch_seed_valid_[start] = 1u;
+        }
+    }
+
+    for (uint32_t pos : scratch_seed_positions_) {
+        if (pos > max_start || scratch_seed_valid_[pos] == 0u) {
+            continue;
+        }
+        const uint32_t key = scratch_seed_keys_[pos];
         const uint32_t freq = index_.occurrence_count(key);
         if (freq == 0 || freq > kHighFreqAllowFallback) {
             continue;
@@ -200,10 +208,11 @@ bool MapperEngine::try_upfront_exactish(const std::string& oriented_read,
                 continue;
             }
             const uint32_t start = static_cast<uint32_t>(candidate_start);
+            const uint16_t chrom_index = static_cast<uint16_t>(index_.chromosome_for_position(start));
             if (!index_.stays_within_chromosome(start, static_cast<uint32_t>(oriented_read.size()))) {
                 continue;
             }
-            scratch_candidates_.push_back(CandidateInfo{start, seed.frequency, 1});
+            scratch_candidates_.push_back(CandidateInfo{start, seed.frequency, 1, chrom_index});
         }
     }
 
@@ -227,7 +236,7 @@ bool MapperEngine::try_upfront_exactish(const std::string& oriented_read,
     const std::size_t limit = std::min<std::size_t>(kQuickCandidateLimit, scratch_candidates_.size());
     for (std::size_t i = 0; i < limit; ++i) {
         const CandidateInfo& candidate = scratch_candidates_[i];
-        const std::size_t chrom_index = index_.chromosome_for_position(candidate.start);
+        const std::size_t chrom_index = candidate.chrom_index;
         const auto& chrom = index_.chromosome(chrom_index);
         const uint64_t local_pos = static_cast<uint64_t>(candidate.start) - chrom.start;
         index_.extract_sequence(candidate.start, static_cast<uint32_t>(oriented_read.size()), ref_buffer_);
@@ -304,14 +313,14 @@ void MapperEngine::generate_candidates(const std::vector<SeedSpec>& seeds,
         uint16_t unique_seed_count = 0;
         uint32_t min_read_offset = 0xFFFFFFFFu;
         uint32_t max_read_offset = 0;
-        std::size_t chrom_index = 0;
+        uint16_t chrom_index = 0;
     };
 
     std::vector<ChainCluster> clusters;
     clusters.reserve(scratch_anchors_.size());
 
     for (const SeedAnchor& anchor : scratch_anchors_) {
-        const std::size_t chrom_index = index_.chromosome_for_position(anchor.start);
+        const uint16_t chrom_index = static_cast<uint16_t>(index_.chromosome_for_position(anchor.start));
         const SeedSpec& seed = seeds[anchor.seed_index];
         if (!clusters.empty()) {
             ChainCluster& cluster = clusters.back();
@@ -369,7 +378,8 @@ void MapperEngine::generate_candidates(const std::vector<SeedSpec>& seeds,
         starts.push_back(CandidateInfo{
             representative,
             clusters[i].best_seed_freq,
-            clusters[i].unique_seed_count
+            clusters[i].unique_seed_count,
+            static_cast<uint16_t>(clusters[i].chrom_index)
         });
     }
 }
@@ -379,7 +389,7 @@ int MapperEngine::prefilter_candidate(const std::string& oriented_read,
                                       const CandidateInfo& candidate,
                                       int max_errors) {
     const uint32_t global_start = candidate.start;
-    const std::size_t chrom_index = index_.chromosome_for_position(global_start);
+    const std::size_t chrom_index = candidate.chrom_index;
     const auto& chrom = index_.chromosome(chrom_index);
     const uint64_t local_pos = static_cast<uint64_t>(global_start) - chrom.start;
     const uint32_t min_ref_len = oriented_read.size() > static_cast<std::size_t>(max_errors)
@@ -432,7 +442,7 @@ AlignmentHit MapperEngine::verify_candidate(const std::string& oriented_read,
     no_hit.edit_distance = std::numeric_limits<int>::max();
 
     const uint32_t global_start = candidate.start;
-    const std::size_t chrom_index = index_.chromosome_for_position(global_start);
+    const std::size_t chrom_index = candidate.chrom_index;
     const auto& chrom = index_.chromosome(chrom_index);
     const uint64_t local_pos = static_cast<uint64_t>(global_start) - chrom.start;
     const uint32_t min_ref_len = oriented_read.size() > static_cast<std::size_t>(max_errors)
@@ -626,8 +636,9 @@ std::string MapperEngine::format_record(const FastqRecord& record,
 }
 
 std::string MapperEngine::map_record(const FastqRecord& record, int max_errors) {
-    const std::string normalized = normalize_sequence(record.seq);
-    const std::string revcomp = reverse_complement(normalized);
+    std::string normalized;
+    std::string revcomp;
+    normalize_and_reverse_complement(record.seq, normalized, revcomp);
     std::vector<AlignmentHit> hits;
     hits.reserve(2);
 

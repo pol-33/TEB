@@ -1,6 +1,7 @@
 #include "index.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <cstring>
 #include <fstream>
@@ -19,6 +20,25 @@ namespace mapper_speed {
 namespace {
 
 constexpr char kMagic[8] = {'M', 'S', 'P', 'D', 'I', 'D', 'X', '1'};
+
+const auto& packed_byte_to_bases() {
+    static const std::array<uint32_t, 256> table = []() {
+        std::array<uint32_t, 256> values{};
+        for (uint32_t byte = 0; byte < 256u; ++byte) {
+            char chars[4] = {
+                kCodeToBase[byte & 0x3u],
+                kCodeToBase[(byte >> 2u) & 0x3u],
+                kCodeToBase[(byte >> 4u) & 0x3u],
+                kCodeToBase[(byte >> 6u) & 0x3u]
+            };
+            uint32_t word = 0;
+            std::memcpy(&word, chars, sizeof(word));
+            values[byte] = word;
+        }
+        return values;
+    }();
+    return table;
+}
 
 template <typename T>
 void write_value(std::ofstream& out, const T& value) {
@@ -197,6 +217,18 @@ void IndexView::open(const std::string& path) {
     n_mask_ = reinterpret_cast<const uint64_t*>(mapping_ + header_.n_mask_offset);
     page_meta_ = reinterpret_cast<const OffsetPageMeta*>(mapping_ + header_.offset_page_meta_offset);
     positions_ = reinterpret_cast<const uint32_t*>(mapping_ + header_.positions_offset);
+
+    const std::size_t bin_count =
+        (static_cast<std::size_t>(header_.genome_length) + kChromLookupBinSize - 1u) >> kChromLookupShift;
+    chrom_lookup_bins_.assign(bin_count, 0);
+    std::size_t chrom_index = 0;
+    for (std::size_t bin = 0; bin < bin_count; ++bin) {
+        const uint32_t pos = static_cast<uint32_t>(bin << kChromLookupShift);
+        while (chrom_index + 1u < chromosomes_.size() && chromosomes_[chrom_index + 1u].start <= pos) {
+            ++chrom_index;
+        }
+        chrom_lookup_bins_[bin] = static_cast<uint16_t>(chrom_index);
+    }
 }
 
 void IndexView::close() {
@@ -210,6 +242,7 @@ void IndexView::close() {
     }
     mapping_size_ = 0;
     chromosomes_.clear();
+    chrom_lookup_bins_.clear();
     packed_reference_ = nullptr;
     n_mask_ = nullptr;
     page_meta_ = nullptr;
@@ -304,21 +337,67 @@ char IndexView::base_at(uint32_t global_pos) const {
 
 void IndexView::extract_sequence(uint32_t global_pos, uint32_t length, std::string& out) const {
     out.resize(length);
-    for (uint32_t i = 0; i < length; ++i) {
-        out[i] = base_at(global_pos + i);
+    if (length == 0u) {
+        return;
+    }
+
+    char* dst = out.data();
+    uint32_t pos = global_pos;
+    uint32_t written = 0;
+
+    const uint32_t prefix = std::min<uint32_t>(length, static_cast<uint32_t>((4u - (pos & 3u)) & 3u));
+    for (; written < prefix; ++written, ++pos) {
+        dst[written] = kCodeToBase[packed_get(packed_reference_, pos)];
+    }
+
+    const auto& decode = packed_byte_to_bases();
+    const uint32_t full_bytes = (length - written) >> 2u;
+    std::size_t byte_index = pos >> 2u;
+    for (uint32_t i = 0; i < full_bytes; ++i) {
+        const uint32_t packed_chars = decode[packed_reference_[byte_index + i]];
+        std::memcpy(dst + written + (i << 2u), &packed_chars, sizeof(uint32_t));
+    }
+    written += full_bytes << 2u;
+    pos += full_bytes << 2u;
+
+    for (; written < length; ++written, ++pos) {
+        dst[written] = kCodeToBase[packed_get(packed_reference_, pos)];
+    }
+
+    const uint32_t end_pos = global_pos + length;
+    std::size_t word_index = global_pos >> 6u;
+    const std::size_t end_word = (end_pos - 1u) >> 6u;
+    while (word_index <= end_word) {
+        uint64_t mask = n_mask_[word_index];
+        const uint32_t word_base = static_cast<uint32_t>(word_index << 6u);
+        if (word_base < global_pos) {
+            mask &= (~uint64_t{0}) << (global_pos - word_base);
+        }
+        if (word_base + 64u > end_pos) {
+            mask &= (~uint64_t{0}) >> ((word_base + 64u) - end_pos);
+        }
+        while (mask != 0u) {
+            const uint32_t bit = static_cast<uint32_t>(__builtin_ctzll(mask));
+            dst[word_base + bit - global_pos] = 'N';
+            mask &= (mask - 1u);
+        }
+        ++word_index;
     }
 }
 
 std::size_t IndexView::chromosome_for_position(uint32_t global_pos) const {
-    auto it = std::upper_bound(chromosomes_.begin(), chromosomes_.end(), global_pos,
-        [](uint32_t pos, const ChromosomeRecord& chrom) {
-            return pos < chrom.start;
-        });
-    if (it == chromosomes_.begin()) {
-        return 0;
+    if (chrom_lookup_bins_.empty()) {
+        return 0u;
     }
-    --it;
-    return static_cast<std::size_t>(it - chromosomes_.begin());
+    std::size_t index =
+        chrom_lookup_bins_[std::min<std::size_t>(global_pos >> kChromLookupShift, chrom_lookup_bins_.size() - 1u)];
+    while (index + 1u < chromosomes_.size() && chromosomes_[index + 1u].start <= global_pos) {
+        ++index;
+    }
+    while (index > 0u && chromosomes_[index].start > global_pos) {
+        --index;
+    }
+    return index;
 }
 
 bool IndexView::stays_within_chromosome(uint32_t global_pos, uint32_t ref_length) const {

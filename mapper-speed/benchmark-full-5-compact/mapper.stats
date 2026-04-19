@@ -1,0 +1,4 @@
+reads=1000000
+mapped=804617
+unmapped=195383
+with_alt=258101

@@ -13,6 +13,10 @@ namespace mapper_speed {
 namespace {
 
 constexpr std::size_t kMaxDpFinalistsPerOrientation = 12;
+constexpr std::size_t kMaxCandidatePrefilterPerOrientation = 24;
+constexpr uint32_t kSeedMinSpacing = 10;
+constexpr uint32_t kNearDuplicateTolerance = 10;
+constexpr uint32_t kSeedNeighborhoodRadius = 3;
 
 uint32_t encode_seed_at(const std::string& read, uint32_t start, bool& valid) {
     uint32_t key = 0;
@@ -30,11 +34,25 @@ uint32_t encode_seed_at(const std::string& read, uint32_t start, bool& valid) {
 
 std::size_t target_seed_count(int max_errors) {
     switch (max_errors) {
-        case 0: return 4;
-        case 1: return 6;
-        case 2: return 7;
-        default: return 8;
+        case 0: return 6;
+        case 1: return 8;
+        case 2: return 10;
+        default: return 12;
     }
+}
+
+bool far_enough_from_selected(const std::vector<SeedSpec>& selected,
+                              uint32_t read_offset,
+                              uint32_t min_spacing) {
+    for (const SeedSpec& seed : selected) {
+        const uint32_t delta = (seed.read_offset > read_offset)
+            ? (seed.read_offset - read_offset)
+            : (read_offset - seed.read_offset);
+        if (delta < min_spacing) {
+            return false;
+        }
+    }
+    return true;
 }
 
 }  // namespace
@@ -97,34 +115,86 @@ void MapperEngine::collect_seeds(const std::string& normalized_read,
                                  int max_errors,
                                  std::vector<SeedSpec>& seeds) {
     seeds.clear();
+    scratch_seed_candidates_.clear();
     scratch_seed_positions_.clear();
     collect_seed_positions(normalized_read.size(), max_errors, scratch_seed_positions_);
+    if (scratch_seed_positions_.empty()) {
+        return;
+    }
 
-    bool any_under_cutoff = false;
-    SeedSpec best_over_cutoff{};
-    best_over_cutoff.frequency = std::numeric_limits<uint32_t>::max();
+    const uint32_t max_start = static_cast<uint32_t>(normalized_read.size() - kSeedLength);
+    for (uint32_t anchor : scratch_seed_positions_) {
+        SeedSpec best_candidate{};
+        best_candidate.frequency = std::numeric_limits<uint32_t>::max();
 
-    for (uint32_t pos : scratch_seed_positions_) {
-        bool valid = false;
-        const uint32_t key = encode_seed_at(normalized_read, pos, valid);
-        if (!valid) {
-            continue;
+        const uint32_t begin = (anchor > kSeedNeighborhoodRadius) ? (anchor - kSeedNeighborhoodRadius) : 0u;
+        const uint32_t end = std::min<uint32_t>(max_start, anchor + kSeedNeighborhoodRadius);
+        for (uint32_t pos = begin; pos <= end; ++pos) {
+            bool valid = false;
+            const uint32_t key = encode_seed_at(normalized_read, pos, valid);
+            if (!valid) {
+                continue;
+            }
+            const uint32_t freq = index_.occurrence_count(key);
+            if (freq == 0 || freq > kHighFreqAllowFallback) {
+                continue;
+            }
+            SeedSpec candidate{pos, key, freq};
+            if (candidate.frequency < best_candidate.frequency ||
+                (candidate.frequency == best_candidate.frequency && candidate.read_offset < best_candidate.read_offset)) {
+                best_candidate = candidate;
+            }
         }
-        const uint32_t freq = index_.occurrence_count(key);
-        if (freq == 0) {
-            continue;
-        }
-        SeedSpec spec{pos, key, freq};
-        if (freq <= kHighFreqSkip) {
-            any_under_cutoff = true;
-            seeds.push_back(spec);
-        } else if (freq <= kHighFreqAllowFallback && freq < best_over_cutoff.frequency) {
-            best_over_cutoff = spec;
+
+        if (best_candidate.frequency != std::numeric_limits<uint32_t>::max()) {
+            scratch_seed_candidates_.push_back(best_candidate);
         }
     }
 
-    if (!any_under_cutoff && best_over_cutoff.frequency != std::numeric_limits<uint32_t>::max()) {
-        seeds.push_back(best_over_cutoff);
+    if (scratch_seed_candidates_.empty()) {
+        return;
+    }
+
+    std::sort(scratch_seed_candidates_.begin(), scratch_seed_candidates_.end(),
+              [](const SeedSpec& lhs, const SeedSpec& rhs) {
+                  if (lhs.frequency != rhs.frequency) {
+                      return lhs.frequency < rhs.frequency;
+                  }
+                  return lhs.read_offset < rhs.read_offset;
+              });
+
+    const std::size_t target = target_seed_count(max_errors);
+    for (uint32_t spacing : {kSeedMinSpacing, kSeedMinSpacing / 2u, 0u}) {
+        for (const SeedSpec& candidate : scratch_seed_candidates_) {
+            if (candidate.frequency > kHighFreqSkip) {
+                continue;
+            }
+            if (!far_enough_from_selected(seeds, candidate.read_offset, spacing)) {
+                continue;
+            }
+            seeds.push_back(candidate);
+            if (seeds.size() >= target) {
+                break;
+            }
+        }
+        if (seeds.size() >= target) {
+            break;
+        }
+    }
+
+    for (uint32_t spacing : {kSeedMinSpacing, kSeedMinSpacing / 2u, 0u}) {
+        for (const SeedSpec& candidate : scratch_seed_candidates_) {
+            if (!far_enough_from_selected(seeds, candidate.read_offset, spacing)) {
+                continue;
+            }
+            seeds.push_back(candidate);
+            if (seeds.size() >= target) {
+                break;
+            }
+        }
+        if (seeds.size() >= target) {
+            break;
+        }
     }
 
     std::sort(seeds.begin(), seeds.end(), [](const SeedSpec& lhs, const SeedSpec& rhs) {
@@ -133,6 +203,11 @@ void MapperEngine::collect_seeds(const std::string& normalized_read,
         }
         return lhs.read_offset < rhs.read_offset;
     });
+    seeds.erase(std::unique(seeds.begin(), seeds.end(),
+                            [](const SeedSpec& lhs, const SeedSpec& rhs) {
+                                return lhs.read_offset == rhs.read_offset && lhs.key == rhs.key;
+                            }),
+                seeds.end());
 }
 
 void MapperEngine::generate_candidates(const std::vector<SeedSpec>& seeds,
@@ -213,8 +288,14 @@ void MapperEngine::generate_candidates(const std::vector<SeedSpec>& seeds,
         return lhs.start < rhs.start;
     });
 
+    const uint16_t best_support = ranked.empty() ? 0u : ranked.front().support;
+    const uint16_t support_floor = (best_support >= 3u) ? static_cast<uint16_t>(best_support - 1u) : best_support;
+
     const std::size_t limit = std::min<std::size_t>(kMaxVerifyPerOrientation, ranked.size());
     for (std::size_t i = 0; i < limit; ++i) {
+        if (ranked[i].support < support_floor) {
+            break;
+        }
         starts.push_back(CandidateInfo{
             ranked[i].start,
             ranked[i].best_seed_freq,
@@ -334,6 +415,17 @@ void MapperEngine::maybe_add_hit(std::vector<AlignmentHit>& hits, AlignmentHit&&
         return;
     }
     for (AlignmentHit& existing : hits) {
+        if (existing.chrom_index == hit.chrom_index && existing.edit_distance == hit.edit_distance) {
+            const uint32_t delta = (existing.ref_pos_1based > hit.ref_pos_1based)
+                ? (existing.ref_pos_1based - hit.ref_pos_1based)
+                : (hit.ref_pos_1based - existing.ref_pos_1based);
+            if (delta <= kNearDuplicateTolerance) {
+                if (better_hit(hit, existing)) {
+                    existing = std::move(hit);
+                }
+                return;
+            }
+        }
         if (existing.chrom_index == hit.chrom_index && existing.global_pos == hit.global_pos && existing.cigar == hit.cigar) {
             if (better_hit(hit, existing)) {
                 existing = std::move(hit);
@@ -364,9 +456,10 @@ void MapperEngine::search_orientation(const std::string& oriented_read,
     scratch_candidates_.clear();
     generate_candidates(scratch_seeds_, oriented_read.size(), max_errors, scratch_candidates_);
 
+    const int initial_score_limit = (hits.size() >= 2u) ? hits.back().edit_distance : max_errors;
     for (const CandidateInfo& candidate : scratch_candidates_) {
         const int best_score = prefilter_candidate(oriented_read, query, candidate, max_errors);
-        if (best_score <= max_errors) {
+        if (best_score <= initial_score_limit) {
             scratch_prefiltered_.push_back(PrefilterCandidate{candidate, best_score});
         }
     }
@@ -385,9 +478,22 @@ void MapperEngine::search_orientation(const std::string& oriented_read,
                   return lhs.candidate.start < rhs.candidate.start;
               });
 
-    const std::size_t dp_limit = std::min<std::size_t>(kMaxDpFinalistsPerOrientation, scratch_prefiltered_.size());
+    const int best_prefilter_score = scratch_prefiltered_.empty()
+        ? std::numeric_limits<int>::max()
+        : scratch_prefiltered_.front().best_score;
+    const std::size_t dp_limit =
+        std::min<std::size_t>(kMaxDpFinalistsPerOrientation,
+                              std::min<std::size_t>(kMaxCandidatePrefilterPerOrientation, scratch_prefiltered_.size()));
     for (std::size_t i = 0; i < dp_limit; ++i) {
+        const int current_score_limit = (hits.size() >= 2u) ? hits.back().edit_distance : max_errors;
+        if (scratch_prefiltered_[i].best_score > current_score_limit ||
+            scratch_prefiltered_[i].best_score > best_prefilter_score + 1) {
+            break;
+        }
         maybe_add_hit(hits, verify_candidate(oriented_read, scratch_prefiltered_[i].candidate, max_errors));
+        if (hits.size() >= 2u && hits.back().edit_distance == 0) {
+            break;
+        }
     }
 }
 
@@ -437,7 +543,9 @@ std::string MapperEngine::map_record(const FastqRecord& record, int max_errors) 
     hits.reserve(2);
 
     search_orientation(normalized, max_errors, hits);
-    search_orientation(revcomp, max_errors, hits);
+    if (hits.size() < 2u || hits.back().edit_distance > 0) {
+        search_orientation(revcomp, max_errors, hits);
+    }
     std::sort(hits.begin(), hits.end(), [this](const AlignmentHit& lhs, const AlignmentHit& rhs) {
         return better_hit(lhs, rhs);
     });

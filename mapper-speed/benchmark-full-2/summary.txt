@@ -1,0 +1,47 @@
+Benchmark Summary
+=================
+reference: ../datasets/GRCh38.fna
+reads: ../datasets/reads_1M.fastq
+bench_reads: 1000000
+index: ./genome.idx
+k: 1
+timing_backend: full
+
+mapper-speed
+------------
+real_seconds_avg: 1476.838000
+real_seconds_last: 1442.17
+user_seconds: 179.18
+sys_seconds: 97.95
+reads_per_second: 677.12
+peak_rss_bytes: 9344286720
+page_faults: 9574039
+mapped: 799436
+unmapped: 200564
+with_alt: 697460
+
+bwa mem
+-------
+bwa_bin: /opt/homebrew/bin/bwa
+real_seconds_avg: 285.514000
+real_seconds_last: 292.04
+user_seconds: 287.94
+sys_seconds: 4.09
+reads_per_second: 3502.46
+peak_rss_bytes: 6391562240
+page_faults: 17
+mapped: 843431
+unmapped: 156569
+with_alt: 0
+
+correctness_vs_bwa
+------------------
+subset_reads: 1000000
+shared_mapped: 798610
+chrom_match: 769390
+within_10bp: 595670
+exact_pos: 593443
+exact_cigar: 763496
+exact_primary: 591146
+mapper_only: 826
+bwa_only: 44821

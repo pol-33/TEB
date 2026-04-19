@@ -79,6 +79,7 @@ private:
     AlignmentWorkspace alignment_workspace_;
     std::string ref_buffer_;
     std::vector<uint32_t> scratch_seed_positions_;
+    std::vector<SeedSpec> scratch_seed_candidates_;
     std::vector<SeedSpec> scratch_seeds_;
     std::vector<CandidateInfo> scratch_candidates_;
     std::vector<PrefilterCandidate> scratch_prefiltered_;

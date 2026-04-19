@@ -62,8 +62,7 @@ bool far_enough_from_selected(const std::vector<SeedSpec>& selected,
 
 MapperEngine::MapperEngine(const IndexView& index)
     : index_(index),
-      dispatch_(resolve_myers_dispatch()),
-      candidate_table_(kCandidateTableSize) {
+      dispatch_(resolve_myers_dispatch()) {
 }
 
 void MapperEngine::collect_seed_positions(std::size_t read_length,
@@ -280,129 +279,112 @@ void MapperEngine::generate_candidates(const std::vector<SeedSpec>& seeds,
                                        int max_errors,
                                        std::vector<CandidateInfo>& starts) {
     starts.clear();
-    for (CandidateSlot& slot : candidate_table_) {
-        slot.occupied = false;
-        slot.support = 0;
-        slot.best_seed_freq = 0xFFFFFFFFu;
-        slot.start = 0;
-    }
+    scratch_anchors_.clear();
+    const uint32_t cluster_window = static_cast<uint32_t>(max_errors) + kCandidateClusterSlack;
+    const uint32_t min_ref_len = read_length > static_cast<std::size_t>(max_errors)
+        ? static_cast<uint32_t>(read_length - static_cast<std::size_t>(max_errors))
+        : 1u;
 
-    std::vector<uint32_t> per_seed;
-    per_seed.reserve(4096);
-
-    for (const SeedSpec& seed : seeds) {
-        per_seed.clear();
+    for (uint16_t seed_index = 0; seed_index < seeds.size(); ++seed_index) {
+        const SeedSpec& seed = seeds[seed_index];
         const auto range = index_.positions_for(seed.key);
         for (const uint32_t* it = range.first; it != range.second; ++it) {
-            const int64_t ref_seed_pos = static_cast<int64_t>(*it);
-            for (int delta = -max_errors; delta <= max_errors; ++delta) {
-                const int64_t candidate = ref_seed_pos - static_cast<int64_t>(seed.read_offset) + delta;
-                if (candidate < 0) {
-                    continue;
-                }
-                const uint64_t start = static_cast<uint64_t>(candidate);
-                const uint64_t min_ref_len = read_length > static_cast<std::size_t>(max_errors)
-                    ? read_length - static_cast<std::size_t>(max_errors)
-                    : 1u;
-                if (start + min_ref_len > index_.genome_length()) {
-                    continue;
-                }
-                per_seed.push_back(static_cast<uint32_t>(start));
+            const int64_t candidate = static_cast<int64_t>(*it) - static_cast<int64_t>(seed.read_offset);
+            if (candidate < 0) {
+                continue;
             }
-        }
-
-        std::sort(per_seed.begin(), per_seed.end());
-        per_seed.erase(std::unique(per_seed.begin(), per_seed.end()), per_seed.end());
-
-        for (uint32_t start : per_seed) {
-            std::size_t slot_idx = start & (candidate_table_.size() - 1u);
-            while (true) {
-                CandidateSlot& slot = candidate_table_[slot_idx];
-                if (!slot.occupied) {
-                    slot.occupied = true;
-                    slot.start = start;
-                    slot.support = 1;
-                    slot.best_seed_freq = seed.frequency;
-                    break;
-                }
-                if (slot.start == start) {
-                    ++slot.support;
-                    slot.best_seed_freq = std::min(slot.best_seed_freq, seed.frequency);
-                    break;
-                }
-                slot_idx = (slot_idx + 1u) & (candidate_table_.size() - 1u);
+            const uint32_t start = static_cast<uint32_t>(candidate);
+            if (static_cast<uint64_t>(start) + min_ref_len > index_.genome_length()) {
+                continue;
             }
+            scratch_anchors_.push_back(SeedAnchor{start, seed_index, 0});
         }
     }
 
-    std::vector<CandidateSlot> ranked;
-    ranked.reserve(candidate_table_.size());
-    for (const CandidateSlot& slot : candidate_table_) {
-        if (slot.occupied) {
-            ranked.push_back(slot);
-        }
+    if (scratch_anchors_.empty()) {
+        return;
     }
 
-    struct CandidateCluster {
-        uint32_t start = 0;
+    std::sort(scratch_anchors_.begin(), scratch_anchors_.end(),
+              [](const SeedAnchor& lhs, const SeedAnchor& rhs) {
+                  return lhs.start < rhs.start;
+              });
+
+    struct ChainCluster {
+        uint32_t min_start = 0;
+        uint32_t max_start = 0;
         uint32_t best_seed_freq = 0xFFFFFFFFu;
-        uint16_t support_sum = 0;
-        uint16_t best_member_support = 0;
+        uint32_t seed_mask = 0;
+        uint16_t anchor_count = 0;
+        uint16_t unique_seed_count = 0;
+        uint32_t min_read_offset = 0xFFFFFFFFu;
+        uint32_t max_read_offset = 0;
         std::size_t chrom_index = 0;
     };
 
-    std::sort(ranked.begin(), ranked.end(), [](const CandidateSlot& lhs, const CandidateSlot& rhs) {
-        return lhs.start < rhs.start;
-    });
+    std::vector<ChainCluster> clusters;
+    clusters.reserve(scratch_anchors_.size());
 
-    std::vector<CandidateCluster> clustered;
-    clustered.reserve(ranked.size());
-    const uint32_t cluster_window = static_cast<uint32_t>(max_errors) + kCandidateClusterSlack;
-    for (const CandidateSlot& slot : ranked) {
-        const std::size_t chrom_index = index_.chromosome_for_position(slot.start);
-        if (!clustered.empty()) {
-            CandidateCluster& cluster = clustered.back();
+    for (const SeedAnchor& anchor : scratch_anchors_) {
+        const std::size_t chrom_index = index_.chromosome_for_position(anchor.start);
+        const SeedSpec& seed = seeds[anchor.seed_index];
+        if (!clusters.empty()) {
+            ChainCluster& cluster = clusters.back();
             if (cluster.chrom_index == chrom_index &&
-                slot.start >= cluster.start &&
-                slot.start - cluster.start <= cluster_window) {
-                const uint32_t merged_support = static_cast<uint32_t>(cluster.support_sum) + slot.support;
-                cluster.support_sum = static_cast<uint16_t>(std::min<uint32_t>(merged_support, 0xFFFFu));
-                cluster.best_seed_freq = std::min(cluster.best_seed_freq, slot.best_seed_freq);
-                if (slot.support > cluster.best_member_support ||
-                    (slot.support == cluster.best_member_support && slot.best_seed_freq < cluster.best_seed_freq) ||
-                    (slot.support == cluster.best_member_support && slot.best_seed_freq == cluster.best_seed_freq &&
-                     slot.start < cluster.start)) {
-                    cluster.start = slot.start;
-                    cluster.best_member_support = slot.support;
+                anchor.start >= cluster.max_start &&
+                anchor.start - cluster.max_start <= cluster_window) {
+                cluster.max_start = anchor.start;
+                cluster.best_seed_freq = std::min(cluster.best_seed_freq, seed.frequency);
+                cluster.anchor_count = static_cast<uint16_t>(std::min<uint32_t>(cluster.anchor_count + 1u, 0xFFFFu));
+                cluster.min_read_offset = std::min(cluster.min_read_offset, seed.read_offset);
+                cluster.max_read_offset = std::max(cluster.max_read_offset, seed.read_offset);
+                const uint32_t bit = (anchor.seed_index < 32u) ? (uint32_t{1} << anchor.seed_index) : 0u;
+                if ((cluster.seed_mask & bit) == 0u) {
+                    cluster.seed_mask |= bit;
+                    ++cluster.unique_seed_count;
                 }
                 continue;
             }
         }
-        clustered.push_back(CandidateCluster{
-            slot.start,
-            slot.best_seed_freq,
-            slot.support,
-            slot.support,
-            chrom_index
-        });
+
+        ChainCluster cluster{};
+        cluster.min_start = anchor.start;
+        cluster.max_start = anchor.start;
+        cluster.best_seed_freq = seed.frequency;
+        cluster.anchor_count = 1;
+        cluster.unique_seed_count = 1;
+        cluster.min_read_offset = seed.read_offset;
+        cluster.max_read_offset = seed.read_offset;
+        cluster.chrom_index = chrom_index;
+        cluster.seed_mask = (anchor.seed_index < 32u) ? (uint32_t{1} << anchor.seed_index) : 0u;
+        clusters.push_back(cluster);
     }
 
-    std::sort(clustered.begin(), clustered.end(), [](const CandidateCluster& lhs, const CandidateCluster& rhs) {
-        if (lhs.support_sum != rhs.support_sum) {
-            return lhs.support_sum > rhs.support_sum;
+    std::sort(clusters.begin(), clusters.end(), [](const ChainCluster& lhs, const ChainCluster& rhs) {
+        if (lhs.unique_seed_count != rhs.unique_seed_count) {
+            return lhs.unique_seed_count > rhs.unique_seed_count;
+        }
+        const uint32_t lhs_span = lhs.max_read_offset - lhs.min_read_offset;
+        const uint32_t rhs_span = rhs.max_read_offset - rhs.min_read_offset;
+        if (lhs_span != rhs_span) {
+            return lhs_span > rhs_span;
+        }
+        if (lhs.anchor_count != rhs.anchor_count) {
+            return lhs.anchor_count > rhs.anchor_count;
         }
         if (lhs.best_seed_freq != rhs.best_seed_freq) {
             return lhs.best_seed_freq < rhs.best_seed_freq;
         }
-        return lhs.start < rhs.start;
+        return lhs.min_start < rhs.min_start;
     });
 
-    const std::size_t limit = std::min<std::size_t>(kMaxVerifyPerOrientation, clustered.size());
+    const std::size_t limit = std::min<std::size_t>(kMaxVerifyPerOrientation, clusters.size());
     for (std::size_t i = 0; i < limit; ++i) {
+        const uint32_t representative = clusters[i].min_start + ((clusters[i].max_start - clusters[i].min_start) / 2u);
         starts.push_back(CandidateInfo{
-            clustered[i].start,
-            clustered[i].best_seed_freq,
-            clustered[i].support_sum
+            representative,
+            clusters[i].best_seed_freq,
+            clusters[i].unique_seed_count
         });
     }
 }

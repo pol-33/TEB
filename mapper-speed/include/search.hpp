@@ -27,13 +27,6 @@ struct SeedSpec {
     uint32_t frequency = 0;
 };
 
-struct CandidateSlot {
-    uint32_t start = 0;
-    uint32_t best_seed_freq = 0xFFFFFFFFu;
-    uint16_t support = 0;
-    bool occupied = false;
-};
-
 struct CandidateInfo {
     uint32_t start = 0;
     uint32_t best_seed_freq = 0xFFFFFFFFu;
@@ -43,6 +36,12 @@ struct CandidateInfo {
 struct PrefilterCandidate {
     CandidateInfo candidate;
     int best_score = 0;
+};
+
+struct SeedAnchor {
+    uint32_t start = 0;
+    uint16_t seed_index = 0;
+    uint16_t reserved = 0;
 };
 
 class MapperEngine {
@@ -85,11 +84,11 @@ private:
     std::vector<uint32_t> scratch_seed_positions_;
     std::vector<SeedSpec> scratch_seed_candidates_;
     std::vector<SeedSpec> scratch_seeds_;
+    std::vector<SeedAnchor> scratch_anchors_;
     std::vector<CandidateInfo> scratch_candidates_;
     std::vector<PrefilterCandidate> scratch_prefiltered_;
     std::vector<int> scratch_banded_prev_;
     std::vector<int> scratch_banded_curr_;
-    std::vector<CandidateSlot> candidate_table_;
 };
 
 }  // namespace mapper_speed

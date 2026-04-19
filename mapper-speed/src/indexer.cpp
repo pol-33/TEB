@@ -18,13 +18,14 @@ namespace {
 struct Config {
     std::string reference_path;
     std::string index_path;
+    std::string mode = "auto";
 };
 
 constexpr std::size_t kDensePageThreshold =
     (mapper_speed::kOffsetPageSize * sizeof(uint32_t)) / sizeof(mapper_speed::OffsetTransition);
 
 void usage() {
-    std::cerr << "Usage: indexer -R genome.fa -I genome.idx\n";
+    std::cerr << "Usage: indexer -R genome.fa -I genome.idx [--mode auto|dense|compact]\n";
 }
 
 Config parse_args(int argc, char* argv[]) {
@@ -35,6 +36,8 @@ Config parse_args(int argc, char* argv[]) {
             cfg.reference_path = argv[++i];
         } else if (arg == "-I" && i + 1 < argc) {
             cfg.index_path = argv[++i];
+        } else if (arg == "--mode" && i + 1 < argc) {
+            cfg.mode = argv[++i];
         } else if (arg == "-h" || arg == "--help") {
             usage();
             std::exit(0);
@@ -47,11 +50,16 @@ Config parse_args(int argc, char* argv[]) {
         usage();
         throw std::runtime_error("missing required arguments");
     }
+    if (cfg.mode != "auto" && cfg.mode != "dense" && cfg.mode != "compact") {
+        throw std::runtime_error("invalid --mode, expected auto|dense|compact");
+    }
     return cfg;
 }
 
 template <typename Callback>
-void for_each_valid_seed(const mapper_speed::ReferenceData& reference, Callback&& callback) {
+void for_each_valid_seed(const mapper_speed::ReferenceData& reference,
+                         uint32_t index_stride,
+                         Callback&& callback) {
     constexpr uint32_t kRollingMask = 0xFFFFFFFFu;
 
     for (const auto& chrom : reference.chromosomes) {
@@ -74,7 +82,7 @@ void for_each_valid_seed(const mapper_speed::ReferenceData& reference, Callback&
             }
             if (valid_run >= mapper_speed::kSeedLength) {
                 const uint32_t start = global - mapper_speed::kSeedLength + 1u;
-                if ((start % mapper_speed::kIndexStride) == 0u) {
+                if ((start % index_stride) == 0u) {
                     callback(rolling_key, start);
                 }
             }
@@ -82,12 +90,47 @@ void for_each_valid_seed(const mapper_speed::ReferenceData& reference, Callback&
     }
 }
 
-std::size_t count_valid_positions(const mapper_speed::ReferenceData& reference) {
+std::size_t count_valid_positions(const mapper_speed::ReferenceData& reference, uint32_t index_stride) {
     std::size_t count = 0;
-    for_each_valid_seed(reference, [&](uint32_t, uint32_t) {
+    for_each_valid_seed(reference, index_stride, [&](uint32_t, uint32_t) {
         ++count;
     });
     return count;
+}
+
+uint64_t estimate_dense_index_bytes(const mapper_speed::ReferenceData& reference,
+                                    std::size_t dense_positions) {
+    const uint64_t page_count =
+        (mapper_speed::kOffsetEntryCount + mapper_speed::kOffsetPageSize - 1u) / mapper_speed::kOffsetPageSize;
+    const uint64_t page_meta_bytes = page_count * sizeof(mapper_speed::OffsetPageMeta);
+    const uint64_t chromosome_bytes = static_cast<uint64_t>(reference.chromosomes.size()) *
+        sizeof(mapper_speed::StoredChromosome);
+    const uint64_t positions_bytes = static_cast<uint64_t>(dense_positions) * sizeof(uint32_t);
+    const uint64_t reference_bytes = reference.packed_bases.size() +
+        reference.n_mask_words.size() * sizeof(uint64_t);
+    return sizeof(mapper_speed::IndexHeader) + chromosome_bytes + page_meta_bytes +
+        reference_bytes + positions_bytes + (256u << 20u);
+}
+
+uint32_t choose_index_stride(const mapper_speed::ReferenceData& reference,
+                             const Config& cfg) {
+    if (cfg.mode == "dense") {
+        return mapper_speed::kDenseIndexStride;
+    }
+    if (cfg.mode == "compact") {
+        return mapper_speed::kCompactIndexStride;
+    }
+
+    const uint64_t ram = mapper_speed::physical_memory_bytes();
+    if (ram == 0u) {
+        return mapper_speed::kCompactIndexStride;
+    }
+
+    const std::size_t dense_positions = count_valid_positions(reference, mapper_speed::kDenseIndexStride);
+    const uint64_t estimated_dense_bytes = estimate_dense_index_bytes(reference, dense_positions);
+    return (estimated_dense_bytes <= (ram * 3u) / 5u)
+        ? mapper_speed::kDenseIndexStride
+        : mapper_speed::kCompactIndexStride;
 }
 
 unsigned choose_bucket_bits(std::size_t valid_positions) {
@@ -110,6 +153,7 @@ unsigned choose_bucket_bits(std::size_t valid_positions) {
 }
 
 void collect_bucket_records(const mapper_speed::ReferenceData& reference,
+                            uint32_t index_stride,
                             unsigned bucket_bits,
                             uint32_t bucket_id,
                             std::size_t reserve_hint,
@@ -119,7 +163,7 @@ void collect_bucket_records(const mapper_speed::ReferenceData& reference,
         records.reserve(reserve_hint);
     }
     const unsigned shift = 32u - bucket_bits;
-    for_each_valid_seed(reference, [&](uint32_t key, uint32_t pos) {
+    for_each_valid_seed(reference, index_stride, [&](uint32_t key, uint32_t pos) {
         if (bucket_bits == 0u || (key >> shift) == bucket_id) {
             records.push_back((uint64_t{key} << 32u) | pos);
         }
@@ -150,6 +194,7 @@ class DirectIndexWriter {
 public:
     DirectIndexWriter(const std::string& path,
                       const mapper_speed::ReferenceData& reference,
+                      uint32_t index_stride,
                       std::size_t page_count,
                       std::size_t positions_count)
         : out_(path, std::ios::binary | std::ios::trunc) {
@@ -159,7 +204,7 @@ public:
 
         std::memcpy(header_.magic, "MSPDIDX1", 8u);
         header_.version = mapper_speed::kIndexVersion;
-        header_.flags = mapper_speed::kIndexStride;
+        header_.flags = index_stride;
         header_.checksum = reference.checksum;
         header_.genome_length = reference.genome_length;
         header_.chromosome_count = static_cast<uint32_t>(reference.chromosomes.size());
@@ -303,6 +348,7 @@ void append_dense_page(uint32_t base_value,
 
 std::size_t build_multipass_index(const mapper_speed::ReferenceData& reference,
                                   const std::string& index_path,
+                                  uint32_t index_stride,
                                   std::size_t valid_positions,
                                   unsigned bucket_bits) {
     const uint64_t page_count =
@@ -310,7 +356,7 @@ std::size_t build_multipass_index(const mapper_speed::ReferenceData& reference,
     std::vector<mapper_speed::OffsetPageMeta> page_meta(
         static_cast<std::size_t>(page_count), mapper_speed::OffsetPageMeta{});
 
-    DirectIndexWriter writer(index_path, reference, page_meta.size(), valid_positions);
+    DirectIndexWriter writer(index_path, reference, index_stride, page_meta.size(), valid_positions);
     const uint32_t bucket_count = uint32_t{1} << bucket_bits;
     const std::size_t reserve_hint = (valid_positions + bucket_count - 1u) / bucket_count;
 
@@ -321,7 +367,7 @@ std::size_t build_multipass_index(const mapper_speed::ReferenceData& reference,
 
     for (uint32_t bucket = 0; bucket < bucket_count; ++bucket) {
         std::cerr << "[indexer] bucket " << (bucket + 1u) << "/" << bucket_count << '\n';
-        collect_bucket_records(reference, bucket_bits, bucket, reserve_hint, records);
+        collect_bucket_records(reference, index_stride, bucket_bits, bucket, reserve_hint, records);
         std::sort(records.begin(), records.end());
 
         const uint64_t bucket_start_key = static_cast<uint64_t>(bucket) << (32u - bucket_bits);
@@ -388,18 +434,21 @@ int main(int argc, char* argv[]) {
     try {
         const Config cfg = parse_args(argc, argv);
         mapper_speed::ReferenceData reference = mapper_speed::load_reference(cfg.reference_path);
+        const uint32_t index_stride = choose_index_stride(reference, cfg);
 
         std::cerr << "[indexer] genome length: " << reference.genome_length << " bp across "
                   << reference.chromosomes.size() << " chromosomes\n";
 
-        const std::size_t valid_positions = count_valid_positions(reference);
+        const std::size_t valid_positions = count_valid_positions(reference, index_stride);
         const unsigned bucket_bits = choose_bucket_bits(valid_positions);
         const uint32_t bucket_count = uint32_t{1} << bucket_bits;
+        const char* mode_label = (index_stride == mapper_speed::kDenseIndexStride) ? "dense" : "compact";
 
-        std::cerr << "[indexer] build mode: compact-page-transitions (multipass-" << bucket_count
-                  << "-bucket, stride-" << mapper_speed::kIndexStride << ")\n";
+        std::cerr << "[indexer] build mode: compact-page-transitions/" << mode_label
+                  << " (multipass-" << bucket_count << "-bucket, stride-" << index_stride << ")\n";
 
-        const std::size_t bytes = build_multipass_index(reference, cfg.index_path, valid_positions, bucket_bits);
+        const std::size_t bytes =
+            build_multipass_index(reference, cfg.index_path, index_stride, valid_positions, bucket_bits);
 
         std::cerr << "[indexer] valid " << mapper_speed::kSeedLength << "-mers: " << valid_positions << "\n";
         std::cerr << "[indexer] index written: " << mapper_speed::bytes_to_mebibytes(bytes) << " MiB\n";

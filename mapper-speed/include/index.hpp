@@ -35,7 +35,7 @@ struct IndexHeader {
     uint32_t version = kIndexVersion;
     uint32_t seed_length = kSeedLength;
     uint32_t page_shift = kOffsetPageShift;
-    uint32_t flags = kIndexStride;
+    uint32_t flags = kDenseIndexStride;
     uint64_t checksum = 0;
     uint32_t genome_length = 0;
     uint32_t chromosome_count = 0;
@@ -88,6 +88,7 @@ public:
     const ChromosomeRecord& chromosome(std::size_t index) const;
     uint32_t positions_count() const;
     uint64_t checksum() const;
+    uint32_t index_stride() const;
 
     uint32_t offset_at(uint64_t key) const;
     uint32_t occurrence_count(uint32_t key) const;

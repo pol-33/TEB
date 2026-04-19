@@ -16,8 +16,9 @@
 namespace mapper_speed {
 
 constexpr uint32_t kSeedLength = 16;
-constexpr uint32_t kIndexVersion = 2;
-constexpr uint32_t kIndexStride = 4;
+constexpr uint32_t kIndexVersion = 3;
+constexpr uint32_t kDenseIndexStride = 1;
+constexpr uint32_t kCompactIndexStride = 4;
 constexpr uint32_t kOffsetPageShift = 12;
 constexpr uint32_t kOffsetPageSize = 1u << kOffsetPageShift;
 constexpr uint64_t kOffsetEntryCount = (uint64_t{1} << (2 * kSeedLength)) + 1u;

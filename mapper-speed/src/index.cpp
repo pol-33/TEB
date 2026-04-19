@@ -55,7 +55,6 @@ std::size_t write_index(const std::string& path,
     IndexHeader header{};
     std::memcpy(header.magic, kMagic, sizeof(kMagic));
     header.version = kIndexVersion;
-    header.flags = kIndexStride;
     header.checksum = reference.checksum;
     header.genome_length = reference.genome_length;
     header.chromosome_count = static_cast<uint32_t>(reference.chromosomes.size());
@@ -175,7 +174,7 @@ void IndexView::open(const std::string& path) {
         throw std::runtime_error("invalid mapper-speed index magic");
     }
     if (header_.version != kIndexVersion || header_.seed_length != kSeedLength ||
-        header_.page_shift != kOffsetPageShift || header_.flags != kIndexStride) {
+        header_.page_shift != kOffsetPageShift || header_.flags == 0u) {
         throw std::runtime_error("unsupported mapper-speed index parameters");
     }
 
@@ -239,6 +238,10 @@ uint32_t IndexView::positions_count() const {
 
 uint64_t IndexView::checksum() const {
     return header_.checksum;
+}
+
+uint32_t IndexView::index_stride() const {
+    return header_.flags;
 }
 
 const OffsetPageMeta& IndexView::page_meta_for_entry(uint64_t entry) const {

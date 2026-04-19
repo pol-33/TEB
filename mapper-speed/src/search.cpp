@@ -76,12 +76,17 @@ void MapperEngine::collect_seed_positions(std::size_t read_length,
 
     const uint32_t max_start = static_cast<uint32_t>(read_length - kSeedLength);
     const std::size_t target = std::min<std::size_t>(target_seed_count(max_errors), static_cast<std::size_t>(max_start) + 1u);
+    const uint32_t stride = std::max<uint32_t>(1u, index_.index_stride());
     if (target <= 1u) {
         positions.push_back(0);
         return;
     }
 
-    positions.reserve(target);
+    positions.reserve(target + stride);
+    const uint32_t residue_limit = std::min<uint32_t>(stride, max_start + 1u);
+    for (uint32_t residue = 0; residue < residue_limit; ++residue) {
+        positions.push_back(residue);
+    }
     for (std::size_t i = 0; i < target; ++i) {
         const uint64_t numerator = static_cast<uint64_t>(i) * max_start + (target - 1u) / 2u;
         positions.push_back(static_cast<uint32_t>(numerator / (target - 1u)));

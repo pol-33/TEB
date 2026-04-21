@@ -4,9 +4,11 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <unistd.h>
 
 #include "common.hpp"
 #include "index.hpp"
@@ -19,13 +21,16 @@ struct Config {
     std::string reference_path;
     std::string index_path;
     std::string mode = "auto";
+    std::optional<unsigned> bucket_bits;
+    uint64_t max_bucket_bytes = 0;
 };
 
 constexpr std::size_t kDensePageThreshold =
     (mapper_speed::kOffsetPageSize * sizeof(uint32_t)) / sizeof(mapper_speed::OffsetTransition);
 
 void usage() {
-    std::cerr << "Usage: indexer -R genome.fa -I genome.idx [--mode auto|dense|compact]\n";
+    std::cerr << "Usage: indexer -R genome.fa -I genome.idx"
+                 " [--mode auto|dense|compact] [--bucket-bits N] [--max-bucket-mib N]\n";
 }
 
 Config parse_args(int argc, char* argv[]) {
@@ -38,6 +43,10 @@ Config parse_args(int argc, char* argv[]) {
             cfg.index_path = argv[++i];
         } else if (arg == "--mode" && i + 1 < argc) {
             cfg.mode = argv[++i];
+        } else if (arg == "--bucket-bits" && i + 1 < argc) {
+            cfg.bucket_bits = static_cast<unsigned>(std::stoul(argv[++i]));
+        } else if (arg == "--max-bucket-mib" && i + 1 < argc) {
+            cfg.max_bucket_bytes = static_cast<uint64_t>(std::stoull(argv[++i])) << 20u;
         } else if (arg == "-h" || arg == "--help") {
             usage();
             std::exit(0);
@@ -52,6 +61,9 @@ Config parse_args(int argc, char* argv[]) {
     }
     if (cfg.mode != "auto" && cfg.mode != "dense" && cfg.mode != "compact") {
         throw std::runtime_error("invalid --mode, expected auto|dense|compact");
+    }
+    if (cfg.bucket_bits.has_value() && *cfg.bucket_bits > 16u) {
+        throw std::runtime_error("invalid --bucket-bits, expected 0..16");
     }
     return cfg;
 }
@@ -133,14 +145,9 @@ uint32_t choose_index_stride(const mapper_speed::ReferenceData& reference,
         : mapper_speed::kCompactIndexStride;
 }
 
-unsigned choose_bucket_bits(std::size_t valid_positions) {
-    const uint64_t ram = mapper_speed::physical_memory_bytes();
-    const uint64_t target_bucket_bytes = ram == 0u
-        ? (uint64_t{1} << 30u)
-        : std::max<uint64_t>(uint64_t{512} << 20u, ram / 10u);
-
+unsigned choose_bucket_bits(std::size_t valid_positions, uint64_t target_bucket_bytes) {
     unsigned bits = 0;
-    while (bits < 12u) {
+    while (bits < 16u) {
         const uint64_t bucket_count = uint64_t{1} << bits;
         const uint64_t avg_bytes =
             (static_cast<uint64_t>(valid_positions) * sizeof(uint64_t) + bucket_count - 1u) / bucket_count;
@@ -150,6 +157,33 @@ unsigned choose_bucket_bits(std::size_t valid_positions) {
         ++bits;
     }
     return bits;
+}
+
+uint64_t choose_default_bucket_bytes(const mapper_speed::ReferenceData& reference,
+                                     uint32_t index_stride) {
+    const uint64_t ram = mapper_speed::physical_memory_bytes();
+    if (ram == 0u) {
+        return 256ULL << 20u;
+    }
+
+    uint64_t target = 0;
+    if (ram >= (192ULL << 30u)) {
+        target = 2ULL << 30u;
+    } else if (ram >= (96ULL << 30u)) {
+        target = 1ULL << 30u;
+    } else if (ram >= (32ULL << 30u)) {
+        target = 512ULL << 20u;
+    } else {
+        target = 256ULL << 20u;
+    }
+
+    if (reference.genome_length >= 1000000000u && index_stride == mapper_speed::kDenseIndexStride) {
+        target = std::min<uint64_t>(target, ram / 24u);
+    }
+
+    const uint64_t floor = 256ULL << 20u;
+    const uint64_t ceiling = std::max<uint64_t>(floor, ram / 12u);
+    return std::max<uint64_t>(floor, std::min<uint64_t>(target, ceiling));
 }
 
 void collect_bucket_records(const mapper_speed::ReferenceData& reference,
@@ -197,9 +231,11 @@ public:
                       uint32_t index_stride,
                       std::size_t page_count,
                       std::size_t positions_count)
-        : out_(path, std::ios::binary | std::ios::trunc) {
+        : final_path_(path),
+          temp_path_(path + ".tmp." + std::to_string(static_cast<long long>(::getpid()))),
+          out_(temp_path_, std::ios::binary | std::ios::trunc) {
         if (!out_) {
-            throw std::runtime_error("failed to open index output: " + path);
+            throw std::runtime_error("failed to open index output: " + temp_path_);
         }
 
         std::memcpy(header_.magic, "MSPDIDX1", 8u);
@@ -269,6 +305,13 @@ public:
         page_data_cursor_ = page_data_offset_;
     }
 
+    ~DirectIndexWriter() {
+        if (!committed_) {
+            out_.close();
+            std::remove(temp_path_.c_str());
+        }
+    }
+
     void append_positions(const uint32_t* data, std::size_t count) {
         out_.seekp(static_cast<std::streamoff>(positions_cursor_));
         out_.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(count * sizeof(uint32_t)));
@@ -304,15 +347,24 @@ public:
         if (!out_) {
             throw std::runtime_error("failed to finalize index");
         }
-        return static_cast<std::size_t>(out_.tellp());
+        const std::size_t bytes = static_cast<std::size_t>(out_.tellp());
+        out_.close();
+        if (std::rename(temp_path_.c_str(), final_path_.c_str()) != 0) {
+            throw std::runtime_error("failed to rename completed index into place");
+        }
+        committed_ = true;
+        return bytes;
     }
 
 private:
+    std::string final_path_;
+    std::string temp_path_;
     std::ofstream out_;
     mapper_speed::IndexHeader header_{};
     uint64_t page_data_offset_ = 0;
     uint64_t positions_cursor_ = 0;
     uint64_t page_data_cursor_ = 0;
+    bool committed_ = false;
 };
 
 void append_sparse_records(const std::vector<mapper_speed::OffsetTransition>& transitions,
@@ -435,17 +487,22 @@ int main(int argc, char* argv[]) {
         const Config cfg = parse_args(argc, argv);
         mapper_speed::ReferenceData reference = mapper_speed::load_reference(cfg.reference_path);
         const uint32_t index_stride = choose_index_stride(reference, cfg);
+        const uint64_t max_bucket_bytes =
+            (cfg.max_bucket_bytes != 0u) ? cfg.max_bucket_bytes : choose_default_bucket_bytes(reference, index_stride);
 
         std::cerr << "[indexer] genome length: " << reference.genome_length << " bp across "
                   << reference.chromosomes.size() << " chromosomes\n";
 
         const std::size_t valid_positions = count_valid_positions(reference, index_stride);
-        const unsigned bucket_bits = choose_bucket_bits(valid_positions);
+        const unsigned bucket_bits = cfg.bucket_bits.has_value()
+            ? *cfg.bucket_bits
+            : choose_bucket_bits(valid_positions, max_bucket_bytes);
         const uint32_t bucket_count = uint32_t{1} << bucket_bits;
         const char* mode_label = (index_stride == mapper_speed::kDenseIndexStride) ? "dense" : "compact";
 
         std::cerr << "[indexer] build mode: compact-page-transitions/" << mode_label
-                  << " (multipass-" << bucket_count << "-bucket, stride-" << index_stride << ")\n";
+                  << " (multipass-" << bucket_count << "-bucket, stride-" << index_stride
+                  << ", max-bucket-mib=" << (max_bucket_bytes >> 20u) << ")\n";
 
         const std::size_t bytes =
             build_multipass_index(reference, cfg.index_path, index_stride, valid_positions, bucket_bits);

@@ -3,15 +3,21 @@
 #SBATCH --job-name=mapper-speed-bench
 #SBATCH --output=%x-%j.out
 #SBATCH --error=%x-%j.err
-#SBATCH --time=04:00:00
+#SBATCH --time=02:00:00
 #SBATCH --cpus-per-task=1
 #SBATCH --ntasks=1
+#SBATCH --nodes=1
+#SBATCH --cpus-per-task=20
+#SBATCH --gres=gpu:1
+#SBATCH --account=nct_370
+#SBATCH --qos=acc_debug
 
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_DATA_DIR="${TMPDIR:-$ROOT_DIR}"
 
+REF="${REF:-$DEFAULT_DATA_DIR/genome.fa}"
 DENSE_INDEX="${DENSE_INDEX:-$DEFAULT_DATA_DIR/genome.idx}"
 COMPACT_INDEX="${COMPACT_INDEX:-$DEFAULT_DATA_DIR/genome.compact.idx}"
 READS="${READS:-$DEFAULT_DATA_DIR/reads_1M.fastq}"
@@ -22,6 +28,11 @@ BUILD_JOBS="${BUILD_JOBS:-${SLURM_CPUS_PER_TASK:-4}}"
 MAPPER_BIN="${MAPPER_BIN:-$ROOT_DIR/mapper}"
 TIME_BIN="${TIME_BIN:-/usr/bin/time}"
 BENCH_READS="${BENCH_READS:-0}"
+COMPARE_BWA="${COMPARE_BWA:-1}"
+BWA_MODULE="${BWA_MODULE:-bwa/0.7.17}"
+BWA_BIN="${BWA_BIN:-bwa}"
+BWA_THREADS="${BWA_THREADS:-${SLURM_CPUS_PER_TASK:-1}}"
+BWA_PREFIX="${BWA_PREFIX:-$OUT_DIR/reference.bwa}"
 
 mkdir -p "$OUT_DIR"
 
@@ -45,6 +56,7 @@ This script runs four mapper-speed cases:
   4. compact index + AVX512 disabled
 
 Environment overrides:
+  REF=...             Reference FASTA for bwa index
   DENSE_INDEX=...     Dense mapper index
   COMPACT_INDEX=...   Compact mapper index
   READS=...           Input FASTQ
@@ -55,6 +67,11 @@ Environment overrides:
   BUILD_JOBS=4        make -j value
   MAPPER_BIN=...      Path to mapper executable
   TIME_BIN=/usr/bin/time
+  COMPARE_BWA=1       Also run bwa mem and compare against it
+  BWA_MODULE=...      Module name to load when bwa is not already in PATH
+  BWA_BIN=bwa         bwa executable name or absolute path
+  BWA_THREADS=1       Thread count for bwa mem
+  BWA_PREFIX=...      Prefix for bwa index files
 EOF
 }
 
@@ -68,6 +85,11 @@ fi
 [[ -f "$READS" ]] || die "reads FASTQ not found: $READS"
 [[ "$K" =~ ^[0-9]+$ ]] || die "K must be an integer"
 [[ "$BENCH_READS" =~ ^[0-9]+$ ]] || die "BENCH_READS must be an integer"
+[[ "$COMPARE_BWA" =~ ^[01]$ ]] || die "COMPARE_BWA must be 0 or 1"
+[[ "$BWA_THREADS" =~ ^[0-9]+$ ]] || die "BWA_THREADS must be an integer"
+if [[ "$COMPARE_BWA" == "1" ]]; then
+  [[ -f "$REF" ]] || die "reference FASTA not found: $REF"
+fi
 
 if [[ "$BUILD" == "1" ]]; then
   log "building mapper-speed"
@@ -168,6 +190,25 @@ parse_active_simd() {
   ' "$stderr_path"
 }
 
+ensure_module_cmd() {
+  if command -v module >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -f /etc/profile.d/modules.sh ]]; then
+    # shellcheck disable=SC1091
+    source /etc/profile.d/modules.sh
+  fi
+  if ! command -v module >/dev/null 2>&1 && [[ -f /usr/share/lmod/lmod/init/bash ]]; then
+    # shellcheck disable=SC1091
+    source /usr/share/lmod/lmod/init/bash
+  fi
+  if ! command -v module >/dev/null 2>&1 && [[ -f /apps/modules/init/bash ]]; then
+    # shellcheck disable=SC1091
+    source /apps/modules/init/bash
+  fi
+  command -v module >/dev/null 2>&1
+}
+
 run_once() {
   local stdout_path="$1"
   local stderr_path="$2"
@@ -211,10 +252,78 @@ count_mapper_stats() {
   ' "$sam_path" > "$report_path"
 }
 
+count_bwa_stats() {
+  local sam_path="$1"
+  local max_nm="$2"
+  local report_path="$3"
+  awk -v max_nm="$max_nm" '
+    function bit(flag, mask) { return int(flag / mask) % 2; }
+    function valid_cigar(cigar) { return cigar ~ /^([0-9]+[MID])+$/; }
+    /^@/ { next }
+    {
+      flag = $2 + 0;
+      name = $1;
+      is_secondary = bit(flag, 256) || bit(flag, 2048);
+      is_unmapped = ($3 == "*" || bit(flag, 4));
+      nm = -1;
+      for (i = 12; i <= NF; ++i) {
+        if ($i ~ /^NM:i:/) {
+          nm = substr($i, 6) + 0;
+        }
+      }
+      is_valid = (!is_unmapped && nm >= 0 && nm <= max_nm && valid_cigar($6));
+      if (!is_secondary) {
+        reads++;
+        if (is_valid) mapped++;
+        else unmapped++;
+      } else if (is_valid) {
+        alt[name] = 1;
+      }
+    }
+    END {
+      for (name in alt) with_alt++;
+      printf "reads=%d\nmapped=%d\nunmapped=%d\nwith_alt=%d\n",
+             reads + 0, mapped + 0, unmapped + 0, with_alt + 0;
+    }
+  ' "$sam_path" > "$report_path"
+}
+
 convert_mapper_output() {
   local input_path="$1"
   local output_path="$2"
   awk 'BEGIN { FS = "[ \t]+" } { print $1 "\t" $2 "\t" $3 "\t" $4 }' "$input_path" > "$output_path"
+}
+
+convert_bwa_output() {
+  local input_path="$1"
+  local output_path="$2"
+  local max_nm="$3"
+  awk -v max_nm="$max_nm" '
+    function bit(flag, mask) { return int(flag / mask) % 2; }
+    function valid_cigar(cigar) { return cigar ~ /^([0-9]+[MID])+$/; }
+    /^@/ { next }
+    {
+      flag = $2 + 0;
+      if (bit(flag, 256) || bit(flag, 2048)) {
+        next;
+      }
+      if ($3 == "*" || bit(flag, 4)) {
+        print $1 "\t*\t0\t*";
+        next;
+      }
+      nm = -1;
+      for (i = 12; i <= NF; ++i) {
+        if ($i ~ /^NM:i:/) {
+          nm = substr($i, 6) + 0;
+        }
+      }
+      if (nm < 0 || nm > max_nm || !valid_cigar($6)) {
+        print $1 "\t*\t0\t*";
+      } else {
+        print $1 "\t" $3 "\t" $4 "\t" $6;
+      }
+    }
+  ' "$input_path" > "$output_path"
 }
 
 compare_mapper_outputs() {
@@ -267,6 +376,65 @@ compare_mapper_outputs() {
       printf "rhs_only_mapped=%d\n", rhs_only + 0;
     }
   ' "$lhs_tsv" "$rhs_tsv" > "$report_path"
+}
+
+compare_against_bwa() {
+  local mapper_tsv="$1"
+  local bwa_tsv="$2"
+  local report_path="$3"
+
+  awk '
+    BEGIN { FS = "\t" }
+    FNR == NR {
+      mapper_chr[$1] = $2;
+      mapper_pos[$1] = $3 + 0;
+      mapper_cigar[$1] = $4;
+      next;
+    }
+    {
+      name = $1;
+      bwa_chr = $2;
+      bwa_pos = $3 + 0;
+      bwa_cigar = $4;
+      total++;
+
+      mapper_is_mapped = ((name in mapper_chr) && mapper_chr[name] != "*");
+      bwa_is_mapped = (bwa_chr != "*");
+
+      if (mapper_is_mapped) mapper_mapped++;
+      if (bwa_is_mapped) bwa_mapped++;
+
+      if (mapper_is_mapped && bwa_is_mapped) {
+        shared++;
+        if (mapper_chr[name] == bwa_chr) {
+          chrom_match++;
+          delta = mapper_pos[name] - bwa_pos;
+          if (delta < 0) delta = -delta;
+          if (delta == 0) exact_pos++;
+          if (delta <= 10) within10++;
+          if (mapper_cigar[name] == bwa_cigar) exact_cigar++;
+          if (delta == 0 && mapper_cigar[name] == bwa_cigar) exact_primary++;
+        }
+      } else if (mapper_is_mapped && !bwa_is_mapped) {
+        mapper_only++;
+      } else if (!mapper_is_mapped && bwa_is_mapped) {
+        bwa_only++;
+      }
+    }
+    END {
+      printf "reads=%d\n", total + 0;
+      printf "mapper_mapped=%d\n", mapper_mapped + 0;
+      printf "bwa_mapped=%d\n", bwa_mapped + 0;
+      printf "shared_mapped=%d\n", shared + 0;
+      printf "chrom_match=%d\n", chrom_match + 0;
+      printf "within_10bp=%d\n", within10 + 0;
+      printf "exact_pos=%d\n", exact_pos + 0;
+      printf "exact_cigar=%d\n", exact_cigar + 0;
+      printf "exact_primary=%d\n", exact_primary + 0;
+      printf "mapper_only=%d\n", mapper_only + 0;
+      printf "bwa_only=%d\n", bwa_only + 0;
+    }
+  ' "$mapper_tsv" "$bwa_tsv" > "$report_path"
 }
 
 READS_SUBSET="$OUT_DIR/reads_subset.fastq"
@@ -367,6 +535,76 @@ run_case "compact-native" "compact" "$COMPACT_INDEX" "native" "native"
 run_case "dense-noavx512" "dense" "$DENSE_INDEX" "avx512_off" "avx2"
 run_case "compact-noavx512" "compact" "$COMPACT_INDEX" "avx512_off" "avx2"
 
+BWA_AVAILABLE=0
+BWA_LOADED_MODULE="n/a"
+bwa_real_seconds="n/a"
+bwa_user_seconds="n/a"
+bwa_sys_seconds="n/a"
+bwa_peak_rss_bytes="n/a"
+bwa_mapped="n/a"
+bwa_unmapped="n/a"
+bwa_with_alt="n/a"
+
+ensure_bwa_available() {
+  if command -v "$BWA_BIN" >/dev/null 2>&1; then
+    BWA_AVAILABLE=1
+    BWA_LOADED_MODULE="already_in_path"
+    return 0
+  fi
+  if [[ -x "$BWA_BIN" ]]; then
+    BWA_AVAILABLE=1
+    BWA_LOADED_MODULE="custom_path"
+    return 0
+  fi
+  if ! ensure_module_cmd; then
+    return 1
+  fi
+  log "loading module $BWA_MODULE"
+  module load "$BWA_MODULE"
+  hash -r
+  if command -v "$BWA_BIN" >/dev/null 2>&1; then
+    BWA_AVAILABLE=1
+    BWA_LOADED_MODULE="$BWA_MODULE"
+    return 0
+  fi
+  return 1
+}
+
+if [[ "$COMPARE_BWA" == "1" ]]; then
+  ensure_bwa_available || die "bwa is unavailable. Load it manually or set BWA_MODULE/BWA_BIN correctly."
+
+  if [[ ! -f "${BWA_PREFIX}.bwt" ]]; then
+    log "building bwa index"
+    run_once "$OUT_DIR/bwa.index.stdout.log" "$OUT_DIR/bwa.index.stderr.log" "$OUT_DIR/bwa.index.time.log" \
+      "$BWA_BIN" index -p "$BWA_PREFIX" "$REF"
+  fi
+
+  BWA_STDERR="$OUT_DIR/bwa.stderr.log"
+  BWA_TIME="$OUT_DIR/bwa.time.log"
+  BWA_SAM="$OUT_DIR/bwa.sam"
+  BWA_STATS="$OUT_DIR/bwa.stats"
+  BWA_TSV="$OUT_DIR/bwa.tsv"
+  BWA_METRICS="$OUT_DIR/bwa.metrics"
+
+  log "running bwa mem"
+  run_once "$BWA_SAM" "$BWA_STDERR" "$BWA_TIME" \
+    "$BWA_BIN" mem -t "$BWA_THREADS" "$BWA_PREFIX" "$READS_SUBSET"
+  parse_time_report "$BWA_TIME" "$RESOLVED_TIME_STYLE" > "$BWA_METRICS"
+  count_bwa_stats "$BWA_SAM" "$K" "$BWA_STATS"
+  convert_bwa_output "$BWA_SAM" "$BWA_TSV" "$K"
+
+  source "$BWA_METRICS"
+  bwa_real_seconds="$real"
+  bwa_user_seconds="$user"
+  bwa_sys_seconds="$sys"
+  bwa_peak_rss_bytes="$rss"
+
+  source "$BWA_STATS"
+  bwa_mapped="$mapped"
+  bwa_unmapped="$unmapped"
+  bwa_with_alt="$with_alt"
+fi
+
 RUNS_TSV="$OUT_DIR/runs.tsv"
 {
   printf "case_id\tindex_kind\tsimd_label\tsimd_request\teffective_simd\treal_seconds\tuser_seconds\tsys_seconds\tpeak_rss_bytes\tmapped\tunmapped\twith_alt\tcase_dir\n"
@@ -378,6 +616,13 @@ RUNS_TSV="$OUT_DIR/runs.tsv"
       "${CASE_RSS[$i]}" "${CASE_MAPPED[$i]}" "${CASE_UNMAPPED[$i]}" \
       "${CASE_WITH_ALT[$i]}" "${CASE_DIRS[$i]}"
   done
+  if [[ "$BWA_AVAILABLE" == "1" ]]; then
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+      "bwa-mem" "baseline" "baseline" "bwa-mem" "bwa-mem" \
+      "$bwa_real_seconds" "$bwa_user_seconds" "$bwa_sys_seconds" \
+      "$bwa_peak_rss_bytes" "$bwa_mapped" "$bwa_unmapped" \
+      "$bwa_with_alt" "$OUT_DIR"
+  fi
 } > "$RUNS_TSV"
 
 COMPARISONS_TSV="$OUT_DIR/comparisons.tsv"
@@ -401,6 +646,24 @@ for ((i = 0; i < ${#CASE_IDS[@]}; ++i)); do
   done
 done
 
+BWA_CORRECTNESS_TSV="$OUT_DIR/bwa-correctness.tsv"
+if [[ "$BWA_AVAILABLE" == "1" ]]; then
+  printf "mapper_case\tshared_mapped\tchrom_match\twithin_10bp\texact_pos\texact_cigar\texact_primary\tmapper_only\tbwa_only\tdelta_mapped\tdelta_unmapped\tdelta_with_alt\tcomparison_file\n" > "$BWA_CORRECTNESS_TSV"
+  for i in "${!CASE_IDS[@]}"; do
+    comparison_file="$OUT_DIR/correctness-${CASE_IDS[$i]}-vs-bwa.txt"
+    compare_against_bwa "${CASE_DIRS[$i]}/mapper.tsv" "$BWA_TSV" "$comparison_file"
+    source "$comparison_file"
+    delta_mapped="$(awk -v a="${CASE_MAPPED[$i]}" -v b="$bwa_mapped" 'BEGIN { print a - b }')"
+    delta_unmapped="$(awk -v a="${CASE_UNMAPPED[$i]}" -v b="$bwa_unmapped" 'BEGIN { print a - b }')"
+    delta_with_alt="$(awk -v a="${CASE_WITH_ALT[$i]}" -v b="$bwa_with_alt" 'BEGIN { print a - b }')"
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+      "${CASE_IDS[$i]}" "$shared_mapped" "$chrom_match" "$within_10bp" \
+      "$exact_pos" "$exact_cigar" "$exact_primary" "$mapper_only" \
+      "$bwa_only" "$delta_mapped" "$delta_unmapped" "$delta_with_alt" \
+      "$comparison_file" >> "$BWA_CORRECTNESS_TSV"
+  done
+fi
+
 SUMMARY_TXT="$OUT_DIR/summary.txt"
 {
   echo "MN5 Mapper-Speed Benchmark"
@@ -408,12 +671,16 @@ SUMMARY_TXT="$OUT_DIR/summary.txt"
   echo "date: $(date '+%Y-%m-%d %H:%M:%S %Z')"
   echo "host: $(hostname)"
   echo "slurm_job_id: ${SLURM_JOB_ID:-n/a}"
+  echo "reference: $REF"
   echo "reads: $READS"
   echo "bench_reads: $READ_COUNT"
   echo "dense_index: $DENSE_INDEX"
   echo "compact_index: $COMPACT_INDEX"
   echo "k: $K"
   echo "timing_backend: $RESOLVED_TIME_STYLE"
+  echo "bwa_module: $BWA_MODULE"
+  echo "bwa_loaded_module: $BWA_LOADED_MODULE"
+  echo "bwa_prefix: $BWA_PREFIX"
   echo
   echo "Runs"
   echo "----"
@@ -425,6 +692,11 @@ SUMMARY_TXT="$OUT_DIR/summary.txt"
       "${CASE_SIMD_EFFECTIVE[$i]}" "${CASE_REAL[$i]}" "${CASE_RSS[$i]}" \
       "${CASE_MAPPED[$i]}" "${CASE_UNMAPPED[$i]}" "${CASE_WITH_ALT[$i]}"
   done
+  if [[ "$BWA_AVAILABLE" == "1" ]]; then
+    printf "%-20s %-8s %-12s %-20s %12s %16s %10s %10s %10s\n" \
+      "bwa-mem" "bwa" "baseline" "bwa-mem" "$bwa_real_seconds" \
+      "$bwa_peak_rss_bytes" "$bwa_mapped" "$bwa_unmapped" "$bwa_with_alt"
+  fi
   echo
   echo "Pairwise Comparisons"
   echo "--------------------"
@@ -436,7 +708,23 @@ SUMMARY_TXT="$OUT_DIR/summary.txt"
       "$lhs_case" "$rhs_case" "$shared_mapped" "$exact_primary" "$lhs_only_mapped" \
       "$rhs_only_mapped" "$delta_mapped" "$delta_unmapped" "$delta_with_alt"
   done < "$COMPARISONS_TSV"
+  if [[ "$BWA_AVAILABLE" == "1" ]]; then
+    echo
+    echo "Correctness Vs BWA"
+    echo "------------------"
+    printf "%-20s %12s %12s %12s %12s %12s %12s %12s %12s\n" \
+      "mapper_case" "shared" "chrom" "within10" "exact_pos" "exact_cigar" "exact" "m_only" "bwa_only"
+    while IFS=$'\t' read -r mapper_case shared_mapped chrom_match within_10bp exact_pos exact_cigar exact_primary mapper_only bwa_only delta_mapped delta_unmapped delta_with_alt comparison_file; do
+      [[ "$mapper_case" == "mapper_case" ]] && continue
+      printf "%-20s %12s %12s %12s %12s %12s %12s %12s %12s\n" \
+        "$mapper_case" "$shared_mapped" "$chrom_match" "$within_10bp" \
+        "$exact_pos" "$exact_cigar" "$exact_primary" "$mapper_only" "$bwa_only"
+    done < "$BWA_CORRECTNESS_TSV"
+  fi
   echo
   echo "machine_readable_runs: $RUNS_TSV"
   echo "machine_readable_comparisons: $COMPARISONS_TSV"
+  if [[ "$BWA_AVAILABLE" == "1" ]]; then
+    echo "machine_readable_bwa_correctness: $BWA_CORRECTNESS_TSV"
+  fi
 } | tee "$SUMMARY_TXT"

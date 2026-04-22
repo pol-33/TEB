@@ -52,12 +52,15 @@ sbatch mapper-speed/bench-mn5.sh
 Useful overrides:
 
 ```bash
-DENSE_INDEX=$TMPDIR/genome.idx \
-COMPACT_INDEX=$TMPDIR/genome.compact.idx \
-READS=$TMPDIR/reads_1M.fastq \
-OUT_DIR=$PWD/mapper-speed/bench-mn5-results \
+DENSE_INDEX=./genome.dense.idx \
+COMPACT_INDEX=./genome.compact.idx \
+REF=../data/genome.fa \
+READS=../data/reads_1M.fastq \
+OUT_DIR=./bench-mn5-results \
 sbatch mapper-speed/bench-mn5.sh
 ```
+
+The MN5 script will try to load `bwa/0.7.17` automatically when `bwa` is not already in `PATH`.
 
 To disable AVX512 for a manual run, cap the runtime dispatch:
 

@@ -111,10 +111,11 @@ MyersDispatch resolve_myers_dispatch() {
     dispatch.selected = &myers_generic;
     dispatch.name = "generic";
 #if defined(__x86_64__) || defined(__i386__)
-    if (detect_simd_level() == SimdLevel::kAvx512 && __builtin_cpu_supports("bmi2")) {
+    const SimdFeatures& features = detect_simd_features();
+    if (features.level == SimdLevel::kAvx512 && features.bmi2) {
         dispatch.selected = &myers_avx512;
         dispatch.name = "avx512";
-    } else if (detect_simd_level() == SimdLevel::kAvx2 && __builtin_cpu_supports("bmi2")) {
+    } else if (features.level == SimdLevel::kAvx2 && features.bmi2) {
         dispatch.selected = &myers_popcnt;
         dispatch.name = "popcnt+bmi2";
     }

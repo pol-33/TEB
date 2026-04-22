@@ -50,31 +50,69 @@ enum class SimdLevel : uint8_t {
     kAvx512 = 2
 };
 
-inline SimdLevel detect_simd_level() {
+struct SimdFeatures {
+    SimdLevel level = SimdLevel::kGeneric;
+    bool popcnt = false;
+    bool bmi2 = false;
+    bool avx2 = false;
+    bool avx512f = false;
+    bool avx512bw = false;
+    bool avx512vl = false;
+    bool avx512vbmi = false;
+    bool avx512vpopcntdq = false;
+};
+
+inline const SimdFeatures& detect_simd_features() {
 #if defined(__x86_64__) || defined(__i386__)
-    static const SimdLevel level = []() {
-        if (__builtin_cpu_supports("avx512f") &&
-            __builtin_cpu_supports("avx512bw") &&
-            __builtin_cpu_supports("avx512vl") &&
-            __builtin_cpu_supports("popcnt")) {
-            return SimdLevel::kAvx512;
+    static const SimdFeatures features = []() {
+        SimdFeatures result;
+        result.popcnt = __builtin_cpu_supports("popcnt");
+        result.bmi2 = __builtin_cpu_supports("bmi2");
+        result.avx2 = __builtin_cpu_supports("avx2");
+        result.avx512f = __builtin_cpu_supports("avx512f");
+        result.avx512bw = __builtin_cpu_supports("avx512bw");
+        result.avx512vl = __builtin_cpu_supports("avx512vl");
+        result.avx512vbmi = __builtin_cpu_supports("avx512vbmi");
+        result.avx512vpopcntdq = __builtin_cpu_supports("avx512vpopcntdq");
+
+        if (result.popcnt && result.avx512f && result.avx512bw && result.avx512vl) {
+            result.level = SimdLevel::kAvx512;
+        } else if (result.popcnt && result.avx2) {
+            result.level = SimdLevel::kAvx2;
+        } else {
+            result.level = SimdLevel::kGeneric;
         }
-        if (__builtin_cpu_supports("avx2") && __builtin_cpu_supports("popcnt")) {
-            return SimdLevel::kAvx2;
-        }
-        return SimdLevel::kGeneric;
+        return result;
     }();
-    return level;
+    return features;
 #else
-    return SimdLevel::kGeneric;
+    static const SimdFeatures features{};
+    return features;
 #endif
 }
 
+inline SimdLevel detect_simd_level() {
+    return detect_simd_features().level;
+}
+
 inline const char* active_simd_name() {
-    switch (detect_simd_level()) {
-        case SimdLevel::kAvx512: return "avx512";
-        case SimdLevel::kAvx2: return "avx2";
-        default: return "generic";
+    const SimdFeatures& features = detect_simd_features();
+    switch (features.level) {
+        case SimdLevel::kAvx512:
+            if (features.avx512vbmi && features.avx512vpopcntdq) {
+                return "avx512+vbmi+vpopcntdq";
+            }
+            if (features.avx512vpopcntdq) {
+                return "avx512+vpopcntdq";
+            }
+            if (features.avx512vbmi) {
+                return "avx512+vbmi";
+            }
+            return "avx512";
+        case SimdLevel::kAvx2:
+            return features.bmi2 ? "avx2+bmi2" : "avx2";
+        default:
+            return "generic";
     }
 }
 
@@ -118,7 +156,7 @@ static inline uint32_t count_byte_mismatches_avx2(const char* lhs, const char* r
     return mismatches + count_byte_mismatches_swar(lhs + i, rhs + i, len - i);
 }
 
-__attribute__((target("avx512bw,avx512vl,popcnt")))
+__attribute__((target("avx512f,avx512bw,avx512vl,popcnt")))
 static inline uint32_t count_byte_mismatches_avx512(const char* lhs, const char* rhs, std::size_t len) {
     uint32_t mismatches = 0;
     std::size_t i = 0;
@@ -148,7 +186,7 @@ static inline uint32_t count_gc_bases_avx2(const char* data, std::size_t len) {
     return gc;
 }
 
-__attribute__((target("avx512bw,avx512vl,popcnt")))
+__attribute__((target("avx512f,avx512bw,avx512vl,popcnt")))
 static inline uint32_t count_gc_bases_avx512(const char* data, std::size_t len) {
     uint32_t gc = 0;
     std::size_t i = 0;

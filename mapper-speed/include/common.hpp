@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <sys/resource.h>
@@ -62,6 +63,53 @@ struct SimdFeatures {
     bool avx512vpopcntdq = false;
 };
 
+inline SimdFeatures apply_simd_cap_from_env(SimdFeatures features) {
+    const char* disable_avx512 = std::getenv("MAPPER_SPEED_DISABLE_AVX512");
+    if (disable_avx512 != nullptr && disable_avx512[0] != '\0' && disable_avx512[0] != '0') {
+        features.avx512f = false;
+        features.avx512bw = false;
+        features.avx512vl = false;
+        features.avx512vbmi = false;
+        features.avx512vpopcntdq = false;
+        if (features.level == SimdLevel::kAvx512) {
+            features.level = (features.popcnt && features.avx2) ? SimdLevel::kAvx2 : SimdLevel::kGeneric;
+        }
+        return features;
+    }
+
+    const char* max_simd = std::getenv("MAPPER_SPEED_MAX_SIMD");
+    if (max_simd == nullptr || max_simd[0] == '\0' ||
+        std::strcmp(max_simd, "native") == 0 || std::strcmp(max_simd, "auto") == 0 ||
+        std::strcmp(max_simd, "avx512") == 0) {
+        return features;
+    }
+
+    if (std::strcmp(max_simd, "avx2") == 0 || std::strcmp(max_simd, "noavx512") == 0) {
+        features.avx512f = false;
+        features.avx512bw = false;
+        features.avx512vl = false;
+        features.avx512vbmi = false;
+        features.avx512vpopcntdq = false;
+        if (features.level == SimdLevel::kAvx512) {
+            features.level = (features.popcnt && features.avx2) ? SimdLevel::kAvx2 : SimdLevel::kGeneric;
+        }
+        return features;
+    }
+
+    if (std::strcmp(max_simd, "generic") == 0 || std::strcmp(max_simd, "none") == 0) {
+        features.level = SimdLevel::kGeneric;
+        features.avx2 = false;
+        features.avx512f = false;
+        features.avx512bw = false;
+        features.avx512vl = false;
+        features.avx512vbmi = false;
+        features.avx512vpopcntdq = false;
+        return features;
+    }
+
+    return features;
+}
+
 inline const SimdFeatures& detect_simd_features() {
 #if defined(__x86_64__) || defined(__i386__)
     static const SimdFeatures features = []() {
@@ -82,7 +130,7 @@ inline const SimdFeatures& detect_simd_features() {
         } else {
             result.level = SimdLevel::kGeneric;
         }
-        return result;
+        return apply_simd_cap_from_env(result);
     }();
     return features;
 #else

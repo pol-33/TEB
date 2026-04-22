@@ -22,6 +22,7 @@ mapper
 test
 bench-results
 *bench-*
+!mapper-speed/bench-mn5.sh
 reference.bwa*
 
 .DS_Store

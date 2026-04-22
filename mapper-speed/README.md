@@ -42,3 +42,25 @@ make test
 ```bash
 BENCH_READS=1000 ./bench.sh
 ```
+
+MareNostrum 5 four-way benchmark:
+
+```bash
+sbatch mapper-speed/bench-mn5.sh
+```
+
+Useful overrides:
+
+```bash
+DENSE_INDEX=$TMPDIR/genome.idx \
+COMPACT_INDEX=$TMPDIR/genome.compact.idx \
+READS=$TMPDIR/reads_1M.fastq \
+OUT_DIR=$PWD/mapper-speed/bench-mn5-results \
+sbatch mapper-speed/bench-mn5.sh
+```
+
+To disable AVX512 for a manual run, cap the runtime dispatch:
+
+```bash
+MAPPER_SPEED_MAX_SIMD=avx2 ./mapper -I genome.idx -i reads.fastq -o out.sam -k 1
+```

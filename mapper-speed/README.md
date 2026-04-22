@@ -57,7 +57,7 @@ COMPACT_INDEX=./genome.compact.idx \
 REF=../data/genome.fa \
 READS=../data/reads_1M.fastq \
 OUT_DIR=./bench-mn5-results \
-sbatch mapper-speed/bench-mn5.sh
+sbatch ./bench-mn5.sh
 ```
 
 The MN5 script will try to load `bwa/0.7.17` automatically when `bwa` is not already in `PATH`.

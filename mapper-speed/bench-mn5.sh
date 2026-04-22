@@ -4,11 +4,9 @@
 #SBATCH --output=%x-%j.out
 #SBATCH --error=%x-%j.err
 #SBATCH --time=02:00:00
-#SBATCH --cpus-per-task=1
 #SBATCH --ntasks=1
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=20
-#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=1
 #SBATCH --account=nct_370
 #SBATCH --qos=acc_debug
 
@@ -126,7 +124,9 @@ extract_subset() {
   local read_count="$2"
   local output_path="$3"
   if [[ "$read_count" -le 0 ]]; then
-    ln -sf "$input_path" "$output_path"
+    local input_abs
+    input_abs="$(cd "$(dirname "$input_path")" && pwd)/$(basename "$input_path")"
+    ln -sf "$input_abs" "$output_path"
   else
     awk -v limit="$((read_count * 4))" 'NR <= limit { print }' "$input_path" > "$output_path"
   fi

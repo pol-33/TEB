@@ -25,6 +25,8 @@ struct SeedSpec {
     uint32_t read_offset = 0;
     uint32_t key = 0;
     uint32_t frequency = 0;
+    const uint32_t* begin = nullptr;
+    const uint32_t* end = nullptr;
 };
 
 struct CandidateInfo {
@@ -41,7 +43,12 @@ struct PrefilterCandidate {
 
 struct SeedAnchor {
     uint32_t start = 0;
-    uint16_t seed_index = 0;
+    uint32_t best_seed_freq = 0xFFFFFFFFu;
+    uint32_t seed_mask = 0;
+    uint32_t min_read_offset = 0xFFFFFFFFu;
+    uint32_t max_read_offset = 0;
+    uint16_t anchor_count = 0;
+    uint16_t unique_seed_count = 0;
     uint16_t chrom_index = 0;
 };
 

@@ -314,13 +314,49 @@ uint32_t IndexView::offset_at(uint64_t key) const {
     return (lo == 0u) ? meta.base_value : records[lo - 1u].value_after;
 }
 
+std::pair<uint32_t, uint32_t> IndexView::offset_range(uint32_t key) const {
+    const uint64_t next_key = static_cast<uint64_t>(key) + 1u;
+    const OffsetPageMeta& meta = page_meta_for_entry(key);
+    if ((key >> kOffsetPageShift) != (next_key >> kOffsetPageShift)) {
+        const uint32_t begin = offset_at(key);
+        return {begin, offset_at(next_key)};
+    }
+
+    if ((meta.flags & (kOffsetPageDense | kOffsetPageSparse)) == 0u || meta.record_count == 0u) {
+        return {meta.base_value, meta.base_value};
+    }
+
+    const uint32_t local = key & (kOffsetPageSize - 1u);
+    if ((meta.flags & kOffsetPageDense) != 0u) {
+        const uint32_t* values = dense_page_values(meta);
+        return {values[local], values[local + 1u]};
+    }
+
+    const OffsetTransition* records = sparse_page_records(meta);
+    uint32_t lo = 0;
+    uint32_t hi = meta.record_count;
+    while (lo < hi) {
+        const uint32_t mid = lo + ((hi - lo) >> 1u);
+        if (records[mid].local_entry <= local) {
+            lo = mid + 1u;
+        } else {
+            hi = mid;
+        }
+    }
+
+    const uint32_t begin = (lo == 0u) ? meta.base_value : records[lo - 1u].value_after;
+    const uint32_t end =
+        (lo < meta.record_count && records[lo].local_entry == local + 1u) ? records[lo].value_after : begin;
+    return {begin, end};
+}
+
 uint32_t IndexView::occurrence_count(uint32_t key) const {
-    return offset_at(static_cast<uint64_t>(key) + 1u) - offset_at(key);
+    const auto [begin, end] = offset_range(key);
+    return end - begin;
 }
 
 std::pair<const uint32_t*, const uint32_t*> IndexView::positions_for(uint32_t key) const {
-    const uint32_t begin = offset_at(key);
-    const uint32_t end = offset_at(static_cast<uint64_t>(key) + 1u);
+    const auto [begin, end] = offset_range(key);
     return {positions_ + begin, positions_ + end};
 }
 

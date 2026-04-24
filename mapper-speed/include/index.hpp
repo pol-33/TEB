@@ -94,6 +94,7 @@ public:
     uint32_t index_stride() const;
 
     uint32_t offset_at(uint64_t key) const;
+    std::pair<uint32_t, uint32_t> offset_range(uint32_t key) const;
     uint32_t occurrence_count(uint32_t key) const;
     std::pair<const uint32_t*, const uint32_t*> positions_for(uint32_t key) const;
     bool has_n(uint32_t global_pos) const;

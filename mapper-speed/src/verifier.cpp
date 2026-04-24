@@ -158,25 +158,40 @@ int banded_score_only(std::string_view read,
     const std::size_t m = ref.size();
     constexpr int kInf = std::numeric_limits<int>::max() / 4;
 
-    prev.assign(m + 1u, kInf);
-    curr.assign(m + 1u, kInf);
+    if (prev.size() < m + 1u) {
+        prev.resize(m + 1u, kInf);
+    }
+    if (curr.size() < m + 1u) {
+        curr.resize(m + 1u, kInf);
+    }
+    std::fill(prev.begin(), prev.begin() + static_cast<std::ptrdiff_t>(m + 1u), kInf);
     prev[0] = 0;
     for (std::size_t j = 1; j <= m && static_cast<int>(j) <= max_errors; ++j) {
         prev[j] = static_cast<int>(j);
     }
+    std::size_t prev_begin = 0;
+    std::size_t prev_end = std::min<std::size_t>(m, static_cast<std::size_t>(max_errors));
 
     for (std::size_t i = 1; i <= n; ++i) {
-        std::fill(curr.begin(), curr.end(), kInf);
-        if (static_cast<int>(i) <= max_errors) {
-            curr[0] = static_cast<int>(i);
-        }
         const std::size_t j_begin =
             (i > static_cast<std::size_t>(max_errors)) ? i - static_cast<std::size_t>(max_errors) : 1u;
         const std::size_t j_end = std::min(m, i + static_cast<std::size_t>(max_errors));
+        const bool row_has_zero = static_cast<int>(i) <= max_errors;
+        const std::size_t curr_begin = row_has_zero ? 0u : j_begin;
+
+        if (row_has_zero) {
+            curr[0] = static_cast<int>(i);
+        } else {
+            curr[j_begin - 1u] = kInf;
+        }
         int row_best = kInf;
         for (std::size_t j = j_begin; j <= j_end; ++j) {
-            int best = prev[j - 1u] + (read[i - 1u] == ref[j - 1u] ? 0 : 1);
-            best = std::min(best, prev[j] + 1);
+            const int diag =
+                (j - 1u >= prev_begin && j - 1u <= prev_end) ? prev[j - 1u] : kInf;
+            const int up =
+                (j >= prev_begin && j <= prev_end) ? prev[j] : kInf;
+            int best = diag + (read[i - 1u] == ref[j - 1u] ? 0 : 1);
+            best = std::min(best, up + 1);
             best = std::min(best, curr[j - 1u] + 1);
             curr[j] = best;
             row_best = std::min(row_best, best);
@@ -185,6 +200,8 @@ int banded_score_only(std::string_view read,
             return row_best;
         }
         prev.swap(curr);
+        prev_begin = curr_begin;
+        prev_end = j_end;
     }
 
     return prev[m];

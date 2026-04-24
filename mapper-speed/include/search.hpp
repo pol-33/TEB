@@ -57,6 +57,8 @@ private:
                        int max_errors,
                        std::vector<SeedSpec>& seeds);
     bool try_upfront_exactish(const std::string& oriented_read,
+                              const std::vector<uint8_t>& packed_read,
+                              bool packed_read_valid,
                               int max_errors,
                               const std::vector<SeedSpec>& seeds,
                               std::vector<AlignmentHit>& hits);
@@ -65,14 +67,20 @@ private:
                              int max_errors,
                              std::vector<CandidateInfo>& starts);
     void search_orientation(const std::string& oriented_read,
+                            const std::vector<uint8_t>& packed_read,
+                            bool packed_read_valid,
                             int max_errors,
                             std::vector<AlignmentHit>& hits);
     void maybe_add_hit(std::vector<AlignmentHit>& hits, AlignmentHit&& hit) const;
     int prefilter_candidate(const std::string& oriented_read,
+                            const std::vector<uint8_t>& packed_read,
+                            bool packed_read_valid,
                             const MyersQuery& query,
                             const CandidateInfo& candidate,
                             int max_errors);
     AlignmentHit verify_candidate(const std::string& oriented_read,
+                                  const std::vector<uint8_t>& packed_read,
+                                  bool packed_read_valid,
                                   const CandidateInfo& candidate,
                                   int max_errors);
     std::string format_record(const FastqRecord& record, const std::vector<AlignmentHit>& hits) const;
@@ -92,6 +100,11 @@ private:
     std::vector<PrefilterCandidate> scratch_prefiltered_;
     std::vector<int> scratch_banded_prev_;
     std::vector<int> scratch_banded_curr_;
+    std::string scratch_normalized_read_;
+    std::string scratch_revcomp_read_;
+    std::vector<uint8_t> scratch_normalized_packed_;
+    std::vector<uint8_t> scratch_revcomp_packed_;
+    std::vector<AlignmentHit> scratch_hits_;
 };
 
 }  // namespace mapper_speed

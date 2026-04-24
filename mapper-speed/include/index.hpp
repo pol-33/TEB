@@ -99,6 +99,10 @@ public:
     bool has_n(uint32_t global_pos) const;
     char base_at(uint32_t global_pos) const;
     void extract_sequence(uint32_t global_pos, uint32_t length, std::string& out) const;
+    uint32_t count_mismatches_packed(uint32_t global_pos,
+                                     const uint8_t* packed_read,
+                                     uint32_t length,
+                                     uint32_t limit) const;
     std::size_t chromosome_for_position(uint32_t global_pos) const;
     bool stays_within_chromosome(uint32_t global_pos, uint32_t ref_length) const;
 

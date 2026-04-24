@@ -98,10 +98,6 @@ int myers_popcnt(const MyersQuery& query, std::string_view ref, int max_errors) 
     return myers128_impl<true>(query, ref, max_errors);
 }
 
-__attribute__((target("avx512f,avx512bw,avx512vl,popcnt,bmi2")))
-int myers_avx512(const MyersQuery& query, std::string_view ref, int max_errors) {
-    return myers128_impl<true>(query, ref, max_errors);
-}
 #endif
 
 }  // namespace
@@ -113,8 +109,8 @@ MyersDispatch resolve_myers_dispatch() {
 #if defined(__x86_64__) || defined(__i386__)
     const SimdFeatures& features = detect_simd_features();
     if (features.level == SimdLevel::kAvx512 && features.bmi2) {
-        dispatch.selected = &myers_avx512;
-        dispatch.name = "avx512";
+        dispatch.selected = &myers_popcnt;
+        dispatch.name = "popcnt+bmi2";
     } else if (features.level == SimdLevel::kAvx2 && features.bmi2) {
         dispatch.selected = &myers_popcnt;
         dispatch.name = "popcnt+bmi2";

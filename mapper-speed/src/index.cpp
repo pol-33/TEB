@@ -385,6 +385,87 @@ void IndexView::extract_sequence(uint32_t global_pos, uint32_t length, std::stri
     }
 }
 
+uint32_t IndexView::count_mismatches_packed(uint32_t global_pos,
+                                            const uint8_t* packed_read,
+                                            uint32_t length,
+                                            uint32_t limit) const {
+    constexpr uint64_t kLaneMask = UINT64_C(0x5555555555555555);
+    uint32_t mismatches = 0;
+    uint32_t offset = 0;
+
+    auto load_ref_codes = [&](uint32_t pos) -> uint64_t {
+        const std::size_t byte_index = pos >> 2u;
+        const unsigned bit_shift = (pos & 3u) * 2u;
+        uint64_t lo = 0;
+        uint64_t hi = 0;
+        const std::size_t available = header_.packed_reference_bytes - byte_index;
+        const std::size_t lo_bytes = std::min<std::size_t>(sizeof(lo), available);
+        if (lo_bytes > 0u) {
+            std::memcpy(&lo, packed_reference_ + byte_index, lo_bytes);
+        }
+        if (bit_shift == 0u) {
+            return lo;
+        }
+        if (available > sizeof(lo)) {
+            const std::size_t hi_bytes = std::min<std::size_t>(sizeof(hi), available - sizeof(lo));
+            std::memcpy(&hi, packed_reference_ + byte_index + sizeof(lo), hi_bytes);
+        }
+        return (lo >> bit_shift) | (hi << (64u - bit_shift));
+    };
+
+    auto load_ref_n_mask = [&](uint32_t pos) -> uint64_t {
+        const std::size_t word_index = pos >> 6u;
+        const unsigned bit_shift = pos & 63u;
+        uint64_t lo = n_mask_[word_index];
+        if (bit_shift == 0u) {
+            return lo;
+        }
+        uint64_t hi = 0;
+        const std::size_t next_word = word_index + 1u;
+        const std::size_t n_mask_words = header_.n_mask_bytes / sizeof(uint64_t);
+        if (next_word < n_mask_words) {
+            hi = n_mask_[next_word];
+        }
+        return (lo >> bit_shift) | (hi << (64u - bit_shift));
+    };
+
+    for (; offset + 32u <= length; offset += 32u) {
+        uint64_t read_chunk = 0;
+        std::memcpy(&read_chunk, packed_read + (offset >> 2u), sizeof(read_chunk));
+        const uint64_t ref_chunk = load_ref_codes(global_pos + offset);
+        const uint32_t n_chunk = static_cast<uint32_t>(load_ref_n_mask(global_pos + offset));
+        if (n_chunk == 0u) {
+            const uint64_t diff = read_chunk ^ ref_chunk;
+            mismatches += static_cast<uint32_t>(__builtin_popcountll((diff | (diff >> 1u)) & kLaneMask));
+        } else {
+            for (uint32_t i = 0; i < 32u; ++i) {
+                if (((n_chunk >> i) & 1u) != 0u) {
+                    ++mismatches;
+                    continue;
+                }
+                const uint8_t ref_code = static_cast<uint8_t>((ref_chunk >> (i * 2u)) & 0x3u);
+                const uint8_t read_code = static_cast<uint8_t>((read_chunk >> (i * 2u)) & 0x3u);
+                mismatches += static_cast<uint32_t>(ref_code != read_code);
+            }
+        }
+        if (mismatches > limit) {
+            return mismatches;
+        }
+    }
+
+    for (; offset < length; ++offset) {
+        const uint32_t pos = global_pos + offset;
+        if (has_n(pos) ||
+            packed_get(packed_read, offset) != packed_get(packed_reference_, pos)) {
+            ++mismatches;
+            if (mismatches > limit) {
+                return mismatches;
+            }
+        }
+    }
+    return mismatches;
+}
+
 std::size_t IndexView::chromosome_for_position(uint32_t global_pos) const {
     if (chrom_lookup_bins_.empty()) {
         return 0u;

@@ -14,6 +14,8 @@ namespace {
 
 constexpr std::size_t kMaxDpFinalistsPerOrientation = 10;
 constexpr std::size_t kMaxCandidatePrefilterPerOrientation = 20;
+constexpr std::size_t kDenseFullSeedProbeLimit = 192;
+constexpr std::size_t kDenseSampledSeedProbeCount = 48;
 constexpr uint32_t kSeedMinSpacing = 10;
 constexpr uint32_t kNearDuplicateTolerance = 10;
 constexpr uint32_t kCandidateClusterSlack = 3;
@@ -65,6 +67,28 @@ void MapperEngine::collect_seed_positions(std::size_t read_length,
     const uint32_t stride = std::max<uint32_t>(1u, index_.index_stride());
     if (target <= 1u) {
         positions.push_back(0);
+        return;
+    }
+
+    if (stride == 1u) {
+        const std::size_t position_count = static_cast<std::size_t>(max_start) + 1u;
+        if (position_count <= kDenseFullSeedProbeLimit) {
+            positions.reserve(position_count);
+            for (uint32_t pos = 0; pos <= max_start; ++pos) {
+                positions.push_back(pos);
+            }
+            return;
+        }
+
+        const std::size_t probe_target =
+            std::min<std::size_t>(position_count, std::max<std::size_t>(target * 4u, kDenseSampledSeedProbeCount));
+        positions.reserve(probe_target);
+        for (std::size_t i = 0; i < probe_target; ++i) {
+            const uint64_t numerator = static_cast<uint64_t>(i) * max_start + (probe_target - 1u) / 2u;
+            positions.push_back(static_cast<uint32_t>(numerator / (probe_target - 1u)));
+        }
+        std::sort(positions.begin(), positions.end());
+        positions.erase(std::unique(positions.begin(), positions.end()), positions.end());
         return;
     }
 
@@ -187,6 +211,8 @@ void MapperEngine::collect_seeds(const std::string& normalized_read,
 }
 
 bool MapperEngine::try_upfront_exactish(const std::string& oriented_read,
+                                        const std::vector<uint8_t>& packed_read,
+                                        bool packed_read_valid,
                                         int max_errors,
                                         const std::vector<SeedSpec>& seeds,
                                         std::vector<AlignmentHit>& hits) {
@@ -239,9 +265,17 @@ bool MapperEngine::try_upfront_exactish(const std::string& oriented_read,
         const std::size_t chrom_index = candidate.chrom_index;
         const auto& chrom = index_.chromosome(chrom_index);
         const uint64_t local_pos = static_cast<uint64_t>(candidate.start) - chrom.start;
-        index_.extract_sequence(candidate.start, static_cast<uint32_t>(oriented_read.size()), ref_buffer_);
-        const uint32_t mismatches =
-            count_byte_mismatches_bulk(oriented_read.data(), ref_buffer_.data(), oriented_read.size());
+        uint32_t mismatches = 0;
+        if (packed_read_valid) {
+            mismatches = index_.count_mismatches_packed(candidate.start,
+                                                       packed_read.data(),
+                                                       static_cast<uint32_t>(oriented_read.size()),
+                                                       static_cast<uint32_t>(max_errors));
+        } else {
+            index_.extract_sequence(candidate.start, static_cast<uint32_t>(oriented_read.size()), ref_buffer_);
+            mismatches =
+                count_byte_mismatches_bulk(oriented_read.data(), ref_buffer_.data(), oriented_read.size());
+        }
         if (static_cast<int>(mismatches) > max_errors) {
             continue;
         }
@@ -385,6 +419,8 @@ void MapperEngine::generate_candidates(const std::vector<SeedSpec>& seeds,
 }
 
 int MapperEngine::prefilter_candidate(const std::string& oriented_read,
+                                      const std::vector<uint8_t>& packed_read,
+                                      bool packed_read_valid,
                                       const MyersQuery& query,
                                       const CandidateInfo& candidate,
                                       int max_errors) {
@@ -405,9 +441,17 @@ int MapperEngine::prefilter_candidate(const std::string& oriented_read,
 
     int best_score = std::numeric_limits<int>::max();
     for (uint32_t ref_len = min_ref_len; ref_len <= max_ref_len; ++ref_len) {
-        index_.extract_sequence(global_start, ref_len, ref_buffer_);
         if (ref_len == oriented_read.size()) {
-            const uint32_t mismatches = count_byte_mismatches_bulk(oriented_read.data(), ref_buffer_.data(), ref_len);
+            uint32_t mismatches = 0;
+            if (packed_read_valid) {
+                mismatches = index_.count_mismatches_packed(global_start,
+                                                           packed_read.data(),
+                                                           ref_len,
+                                                           static_cast<uint32_t>(max_errors));
+            } else {
+                index_.extract_sequence(global_start, ref_len, ref_buffer_);
+                mismatches = count_byte_mismatches_bulk(oriented_read.data(), ref_buffer_.data(), ref_len);
+            }
             if (mismatches == 0u) {
                 return 0;
             }
@@ -418,9 +462,13 @@ int MapperEngine::prefilter_candidate(const std::string& oriented_read,
             if (static_cast<int>(mismatches) <= max_errors) {
                 continue;
             }
+            if (packed_read_valid) {
+                index_.extract_sequence(global_start, ref_len, ref_buffer_);
+            }
             const int score = bounded_edit_distance(dispatch_, query, ref_buffer_, max_errors);
             best_score = std::min(best_score, score);
         } else {
+            index_.extract_sequence(global_start, ref_len, ref_buffer_);
             const int score = banded_score_only(oriented_read,
                                                 ref_buffer_,
                                                 max_errors,
@@ -436,6 +484,8 @@ int MapperEngine::prefilter_candidate(const std::string& oriented_read,
 }
 
 AlignmentHit MapperEngine::verify_candidate(const std::string& oriented_read,
+                                            const std::vector<uint8_t>& packed_read,
+                                            bool packed_read_valid,
                                             const CandidateInfo& candidate,
                                             int max_errors) {
     AlignmentHit no_hit;
@@ -458,9 +508,17 @@ AlignmentHit MapperEngine::verify_candidate(const std::string& oriented_read,
 
     AlignmentHit best_hit = no_hit;
     if (index_.stays_within_chromosome(global_start, static_cast<uint32_t>(oriented_read.size()))) {
-        index_.extract_sequence(global_start, static_cast<uint32_t>(oriented_read.size()), ref_buffer_);
-        const uint32_t mismatches =
-            count_byte_mismatches_bulk(oriented_read.data(), ref_buffer_.data(), oriented_read.size());
+        uint32_t mismatches = 0;
+        if (packed_read_valid) {
+            mismatches = index_.count_mismatches_packed(global_start,
+                                                       packed_read.data(),
+                                                       static_cast<uint32_t>(oriented_read.size()),
+                                                       1u);
+        } else {
+            index_.extract_sequence(global_start, static_cast<uint32_t>(oriented_read.size()), ref_buffer_);
+            mismatches =
+                count_byte_mismatches_bulk(oriented_read.data(), ref_buffer_.data(), oriented_read.size());
+        }
         if (mismatches <= 1u) {
             best_hit.chrom_index = chrom_index;
             best_hit.global_pos = global_start;
@@ -539,6 +597,8 @@ void MapperEngine::maybe_add_hit(std::vector<AlignmentHit>& hits, AlignmentHit&&
 }
 
 void MapperEngine::search_orientation(const std::string& oriented_read,
+                                      const std::vector<uint8_t>& packed_read,
+                                      bool packed_read_valid,
                                       int max_errors,
                                       std::vector<AlignmentHit>& hits) {
     scratch_seeds_.clear();
@@ -547,7 +607,7 @@ void MapperEngine::search_orientation(const std::string& oriented_read,
     if (scratch_seeds_.empty()) {
         return;
     }
-    if (try_upfront_exactish(oriented_read, max_errors, scratch_seeds_, hits)) {
+    if (try_upfront_exactish(oriented_read, packed_read, packed_read_valid, max_errors, scratch_seeds_, hits)) {
         return;
     }
 
@@ -557,7 +617,8 @@ void MapperEngine::search_orientation(const std::string& oriented_read,
 
     const int initial_score_limit = (hits.size() >= 2u) ? hits.back().edit_distance : max_errors;
     for (const CandidateInfo& candidate : scratch_candidates_) {
-        const int best_score = prefilter_candidate(oriented_read, query, candidate, max_errors);
+        const int best_score =
+            prefilter_candidate(oriented_read, packed_read, packed_read_valid, query, candidate, max_errors);
         if (best_score <= initial_score_limit) {
             scratch_prefiltered_.push_back(PrefilterCandidate{candidate, best_score});
         }
@@ -589,7 +650,12 @@ void MapperEngine::search_orientation(const std::string& oriented_read,
             scratch_prefiltered_[i].best_score > best_prefilter_score + 1) {
             break;
         }
-        maybe_add_hit(hits, verify_candidate(oriented_read, scratch_prefiltered_[i].candidate, max_errors));
+        maybe_add_hit(hits,
+                      verify_candidate(oriented_read,
+                                       packed_read,
+                                       packed_read_valid,
+                                       scratch_prefiltered_[i].candidate,
+                                       max_errors));
         if (hits.size() >= 2u && hits.back().edit_distance == 0) {
             break;
         }
@@ -636,23 +702,35 @@ std::string MapperEngine::format_record(const FastqRecord& record,
 }
 
 std::string MapperEngine::map_record(const FastqRecord& record, int max_errors) {
-    std::string normalized;
-    std::string revcomp;
-    normalize_and_reverse_complement(record.seq, normalized, revcomp);
-    std::vector<AlignmentHit> hits;
-    hits.reserve(2);
-
-    search_orientation(normalized, max_errors, hits);
-    if (hits.size() < 2u || hits.back().edit_distance > 0) {
-        search_orientation(revcomp, max_errors, hits);
+    normalize_and_reverse_complement(record.seq, scratch_normalized_read_, scratch_revcomp_read_);
+    const bool normalized_packed_valid =
+        pack_normalized_sequence(scratch_normalized_read_, scratch_normalized_packed_);
+    const bool revcomp_packed_valid =
+        pack_normalized_sequence(scratch_revcomp_read_, scratch_revcomp_packed_);
+    scratch_hits_.clear();
+    if (scratch_hits_.capacity() < 2u) {
+        scratch_hits_.reserve(2u);
     }
-    std::sort(hits.begin(), hits.end(), [this](const AlignmentHit& lhs, const AlignmentHit& rhs) {
+
+    search_orientation(scratch_normalized_read_,
+                       scratch_normalized_packed_,
+                       normalized_packed_valid,
+                       max_errors,
+                       scratch_hits_);
+    if (scratch_hits_.size() < 2u || scratch_hits_.back().edit_distance > 0) {
+        search_orientation(scratch_revcomp_read_,
+                           scratch_revcomp_packed_,
+                           revcomp_packed_valid,
+                           max_errors,
+                           scratch_hits_);
+    }
+    std::sort(scratch_hits_.begin(), scratch_hits_.end(), [this](const AlignmentHit& lhs, const AlignmentHit& rhs) {
         return better_hit(lhs, rhs);
     });
-    if (hits.size() > 2u) {
-        hits.resize(2u);
+    if (scratch_hits_.size() > 2u) {
+        scratch_hits_.resize(2u);
     }
-    return format_record(record, hits);
+    return format_record(record, scratch_hits_);
 }
 
 }  // namespace mapper_speed

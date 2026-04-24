@@ -129,6 +129,21 @@ inline uint8_t packed_get(const uint8_t* packed, std::size_t index) {
     return static_cast<uint8_t>((packed[byte_index] >> shift) & 0x3u);
 }
 
+inline bool pack_normalized_sequence(const std::string& sequence,
+                                     std::vector<uint8_t>& packed) {
+    packed.assign(packed_base_bytes(sequence.size()), 0);
+    bool all_acgt = true;
+    for (std::size_t i = 0; i < sequence.size(); ++i) {
+        const uint8_t code = base_to_code(sequence[i]);
+        if (code == kBaseCodeInvalid) {
+            all_acgt = false;
+            continue;
+        }
+        packed_set(packed, i, code);
+    }
+    return all_acgt;
+}
+
 inline void bitset_set(std::vector<uint64_t>& words, std::size_t index) {
     const std::size_t word_index = index >> 6u;
     if (words.size() <= word_index) {

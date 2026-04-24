@@ -190,6 +190,15 @@ parse_active_simd() {
   ' "$stderr_path"
 }
 
+absolute_path() {
+  local path="$1"
+  if [[ "$path" = /* ]]; then
+    printf '%s\n' "$path"
+  else
+    printf '%s/%s\n' "$(cd "$(dirname "$path")" && pwd)" "$(basename "$path")"
+  fi
+}
+
 ensure_module_cmd() {
   if command -v module >/dev/null 2>&1; then
     return 0
@@ -207,6 +216,35 @@ ensure_module_cmd() {
     source /apps/modules/init/bash
   fi
   command -v module >/dev/null 2>&1
+}
+
+bwa_index_complete() {
+  local prefix="$1"
+  local ext
+  for ext in amb ann bwt pac sa; do
+    [[ -f "${prefix}.${ext}" ]] || return 1
+  done
+  return 0
+}
+
+log_bwa_index_state() {
+  local prefix="$1"
+  local ext
+  local found=()
+  local missing=()
+  for ext in amb ann bwt pac sa; do
+    if [[ -f "${prefix}.${ext}" ]]; then
+      found+=("${prefix}.${ext}")
+    else
+      missing+=("${prefix}.${ext}")
+    fi
+  done
+  if [[ "${#found[@]}" -gt 0 ]]; then
+    log "existing bwa index parts: ${found[*]}"
+  fi
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    log "missing bwa index parts: ${missing[*]}"
+  fi
 }
 
 run_once() {
@@ -455,38 +493,32 @@ CASE_UNMAPPED=()
 CASE_WITH_ALT=()
 CASE_DIRS=()
 
-run_case() {
+mapper_case_complete() {
+  local case_dir="$1"
+  [[ -f "$case_dir/mapper.sam" &&
+     -f "$case_dir/mapper.stats" &&
+     -f "$case_dir/mapper.tsv" &&
+     -f "$case_dir/mapper.metrics" &&
+     -f "$case_dir/mapper.stderr.log" ]]
+}
+
+bwa_run_complete() {
+  [[ -f "$OUT_DIR/bwa.sam" &&
+     -f "$OUT_DIR/bwa.stats" &&
+     -f "$OUT_DIR/bwa.tsv" &&
+     -f "$OUT_DIR/bwa.metrics" &&
+     -f "$OUT_DIR/bwa.stderr.log" ]]
+}
+
+load_case_results() {
   local case_id="$1"
   local index_kind="$2"
-  local index_path="$3"
-  local simd_label="$4"
-  local simd_request="$5"
+  local simd_label="$3"
+  local simd_request="$4"
   local case_dir="$OUT_DIR/$case_id"
-  local stdout_path="$case_dir/mapper.stdout.log"
   local stderr_path="$case_dir/mapper.stderr.log"
-  local time_path="$case_dir/mapper.time.log"
-  local sam_path="$case_dir/mapper.sam"
-  local stats_path="$case_dir/mapper.stats"
-  local tsv_path="$case_dir/mapper.tsv"
-  local metrics_path="$case_dir/mapper.metrics"
 
-  mkdir -p "$case_dir"
-  log "running $case_id"
-
-  if [[ "$simd_request" == "native" ]]; then
-    run_once "$stdout_path" "$stderr_path" "$time_path" \
-      "$MAPPER_BIN" -I "$index_path" -i "$READS_SUBSET" -o "$sam_path" -k "$K"
-  else
-    run_once "$stdout_path" "$stderr_path" "$time_path" \
-      env MAPPER_SPEED_MAX_SIMD="$simd_request" "$MAPPER_BIN" \
-      -I "$index_path" -i "$READS_SUBSET" -o "$sam_path" -k "$K"
-  fi
-
-  parse_time_report "$time_path" "$RESOLVED_TIME_STYLE" > "$metrics_path"
-  count_mapper_stats "$sam_path" "$stats_path"
-  convert_mapper_output "$sam_path" "$tsv_path"
-
-  source "$metrics_path"
+  source "$case_dir/mapper.metrics"
   local real_seconds="$real"
   local user_seconds="$user"
   local sys_seconds="$sys"
@@ -496,7 +528,7 @@ run_case() {
     peak_rss_bytes="$(parse_mapper_peak_rss_bytes "$stderr_path")"
   fi
 
-  source "$stats_path"
+  source "$case_dir/mapper.stats"
   local effective_simd
   effective_simd="$(parse_active_simd "$stderr_path")"
 
@@ -530,6 +562,44 @@ run_case() {
   } > "$case_dir/run.meta"
 }
 
+run_case() {
+  local case_id="$1"
+  local index_kind="$2"
+  local index_path="$3"
+  local simd_label="$4"
+  local simd_request="$5"
+  local case_dir="$OUT_DIR/$case_id"
+  local stdout_path="$case_dir/mapper.stdout.log"
+  local stderr_path="$case_dir/mapper.stderr.log"
+  local time_path="$case_dir/mapper.time.log"
+  local sam_path="$case_dir/mapper.sam"
+  local stats_path="$case_dir/mapper.stats"
+  local tsv_path="$case_dir/mapper.tsv"
+  local metrics_path="$case_dir/mapper.metrics"
+
+  mkdir -p "$case_dir"
+  if mapper_case_complete "$case_dir"; then
+    log "skipping $case_id (reusing existing results)"
+    load_case_results "$case_id" "$index_kind" "$simd_label" "$simd_request"
+    return 0
+  fi
+  log "running $case_id"
+
+  if [[ "$simd_request" == "native" ]]; then
+    run_once "$stdout_path" "$stderr_path" "$time_path" \
+      "$MAPPER_BIN" -I "$index_path" -i "$READS_SUBSET" -o "$sam_path" -k "$K"
+  else
+    run_once "$stdout_path" "$stderr_path" "$time_path" \
+      env MAPPER_SPEED_MAX_SIMD="$simd_request" "$MAPPER_BIN" \
+      -I "$index_path" -i "$READS_SUBSET" -o "$sam_path" -k "$K"
+  fi
+
+  parse_time_report "$time_path" "$RESOLVED_TIME_STYLE" > "$metrics_path"
+  count_mapper_stats "$sam_path" "$stats_path"
+  convert_mapper_output "$sam_path" "$tsv_path"
+  load_case_results "$case_id" "$index_kind" "$simd_label" "$simd_request"
+}
+
 run_case "dense-native" "dense" "$DENSE_INDEX" "native" "native"
 run_case "compact-native" "compact" "$COMPACT_INDEX" "native" "native"
 run_case "dense-noavx512" "dense" "$DENSE_INDEX" "avx512_off" "avx2"
@@ -547,11 +617,13 @@ bwa_with_alt="n/a"
 
 ensure_bwa_available() {
   if command -v "$BWA_BIN" >/dev/null 2>&1; then
+    BWA_BIN="$(command -v "$BWA_BIN")"
     BWA_AVAILABLE=1
     BWA_LOADED_MODULE="already_in_path"
     return 0
   fi
   if [[ -x "$BWA_BIN" ]]; then
+    BWA_BIN="$(absolute_path "$BWA_BIN")"
     BWA_AVAILABLE=1
     BWA_LOADED_MODULE="custom_path"
     return 0
@@ -563,6 +635,7 @@ ensure_bwa_available() {
   module load "$BWA_MODULE"
   hash -r
   if command -v "$BWA_BIN" >/dev/null 2>&1; then
+    BWA_BIN="$(command -v "$BWA_BIN")"
     BWA_AVAILABLE=1
     BWA_LOADED_MODULE="$BWA_MODULE"
     return 0
@@ -573,10 +646,14 @@ ensure_bwa_available() {
 if [[ "$COMPARE_BWA" == "1" ]]; then
   ensure_bwa_available || die "bwa is unavailable. Load it manually or set BWA_MODULE/BWA_BIN correctly."
 
-  if [[ ! -f "${BWA_PREFIX}.bwt" ]]; then
-    log "building bwa index"
+  if ! bwa_index_complete "$BWA_PREFIX"; then
+    log_bwa_index_state "$BWA_PREFIX"
+    log "building bwa index (the final .sa stage can take a long time on full GRCh38)"
     run_once "$OUT_DIR/bwa.index.stdout.log" "$OUT_DIR/bwa.index.stderr.log" "$OUT_DIR/bwa.index.time.log" \
       "$BWA_BIN" index -p "$BWA_PREFIX" "$REF"
+    bwa_index_complete "$BWA_PREFIX" || die "bwa index did not finish correctly for prefix: $BWA_PREFIX"
+  else
+    log "reusing existing bwa index at $BWA_PREFIX"
   fi
 
   BWA_STDERR="$OUT_DIR/bwa.stderr.log"
@@ -586,12 +663,16 @@ if [[ "$COMPARE_BWA" == "1" ]]; then
   BWA_TSV="$OUT_DIR/bwa.tsv"
   BWA_METRICS="$OUT_DIR/bwa.metrics"
 
-  log "running bwa mem"
-  run_once "$BWA_SAM" "$BWA_STDERR" "$BWA_TIME" \
-    "$BWA_BIN" mem -t "$BWA_THREADS" "$BWA_PREFIX" "$READS_SUBSET"
-  parse_time_report "$BWA_TIME" "$RESOLVED_TIME_STYLE" > "$BWA_METRICS"
-  count_bwa_stats "$BWA_SAM" "$K" "$BWA_STATS"
-  convert_bwa_output "$BWA_SAM" "$BWA_TSV" "$K"
+  if bwa_run_complete; then
+    log "skipping bwa mem (reusing existing results)"
+  else
+    log "running bwa mem with $BWA_BIN"
+    run_once "$BWA_SAM" "$BWA_STDERR" "$BWA_TIME" \
+      "$BWA_BIN" mem -t "$BWA_THREADS" "$BWA_PREFIX" "$READS_SUBSET"
+    parse_time_report "$BWA_TIME" "$RESOLVED_TIME_STYLE" > "$BWA_METRICS"
+    count_bwa_stats "$BWA_SAM" "$K" "$BWA_STATS"
+    convert_bwa_output "$BWA_SAM" "$BWA_TSV" "$K"
+  fi
 
   source "$BWA_METRICS"
   bwa_real_seconds="$real"

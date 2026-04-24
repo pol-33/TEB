@@ -61,6 +61,8 @@ sbatch ./bench-mn5.sh
 ```
 
 The MN5 script will try to load `bwa/0.7.17` automatically when `bwa` is not already in `PATH`.
+For full `GRCh38`, `bwa index` can take a long time, especially the final `.sa` file generation. The script now treats the index as complete only when `.amb`, `.ann`, `.bwt`, `.pac`, and `.sa` all exist.
+If a benchmark run is interrupted, rerunning the script will now reuse any mapper or `bwa mem` results that are already complete and only compute the missing parts.
 
 To disable AVX512 for a manual run, cap the runtime dispatch:
 

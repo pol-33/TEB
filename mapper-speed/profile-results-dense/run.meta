@@ -1,0 +1,13 @@
+date=2026-04-24 19:37:03 CEST
+host=as02r5b15
+slurm_job_id=39610734
+index=./genome.dense.idx
+reads=../data/reads_1M.fastq
+profile_reads=5000
+k=1
+profile_mode=all
+mapper_bin=/home/nct/nct01032/TEB/mapper-speed/mapper
+simd_cap=native
+disable_avx512=0
+perf_bin=perf
+valgrind_bin=valgrind

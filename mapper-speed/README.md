@@ -69,3 +69,32 @@ To disable AVX512 for a manual run, cap the runtime dispatch:
 ```bash
 MAPPER_SPEED_MAX_SIMD=avx2 ./mapper -I genome.idx -i reads.fastq -o out.sam -k 1
 ```
+
+## Profiling
+
+Run `perf` and/or `valgrind` with a single script:
+
+```bash
+PROFILE_MODE=all PROFILE_READS=5000 ./profile.sh
+```
+
+Common modes:
+
+```bash
+PROFILE_MODE=perf PROFILE_READS=20000 ./profile.sh
+PROFILE_MODE=callgrind PROFILE_READS=1000 ./profile.sh
+PROFILE_MODE=massif PROFILE_READS=1000 ./profile.sh
+```
+
+The profiler writes raw artifacts plus a compact markdown summary in:
+
+```bash
+./profile-results/summary.md
+```
+
+That summary is intended to be both human-readable and easy to paste into an LLM
+for follow-up bottleneck analysis.
+
+For `valgrind`, the profiler now rebuilds a portable mapper and caps runtime SIMD
+to `generic` by default. This avoids common `Illegal instruction` failures when
+the normal binary was built with host-native ISA extensions.

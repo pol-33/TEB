@@ -1,0 +1,80 @@
+# Mapper-Speed Profile Summary
+
+## Run
+
+| Field | Value |
+| --- | --- |
+| Date | 2026-04-24 19:35:09 CEST |
+| Host | as02r5b15 |
+| Slurm job id | 39610734 |
+| Index | `./genome.compact.idx` |
+| Reads | `../data/reads_1M.fastq` |
+| Profile reads | 5000 |
+| k | 1 |
+| Mode | `all` |
+| SIMD cap | `native` |
+| Disable AVX512 | `0` |
+
+Command template:
+
+```bash
+"/home/nct/nct01032/TEB/mapper-speed/mapper" -I "./genome.compact.idx" -i "./profile-results-compact/reads_subset.fastq" -o <tool-specific-output.sam> -k "1"
+```
+
+## Perf Stat
+
+| Derived metric | Value |
+| --- | --- |
+| IPC | - |
+| Branch miss rate | - |
+| Cache miss rate | - |
+
+| Event | Value | Unit |
+| --- | --- | --- |
+| task-clock:u | 924.99 | msec |
+| cycles:u | 2232271993 | - |
+| instructions:u | 4688713186 | - |
+| branches:u | 783896367 | - |
+| branch-misses:u | 23793857 | - |
+| cache-references:u | 10320188 | - |
+| cache-misses:u | 7758152 | - |
+| minor-faults:u | 331404 | - |
+| major-faults:u | 0 | - |
+
+## Perf Record
+
+Raw files:
+
+- `./profile-results-compact/perf-record/perf.data`
+- `./profile-results-compact/perf-record/perf.report.txt`
+
+### Top Hotspots
+
+```text
+    19.97%    19.54%  mapper   mapper                [.] mapper_speed::MapperEngine::generate_candidates
+    19.66%     0.10%  mapper   mapper                [.] mapper_speed::MapperEngine::search_orientation
+    17.65%     0.42%  mapper   mapper                [.] mapper_speed::MapperEngine::prefilter_candidate
+    17.12%    15.64%  mapper   mapper                [.] mapper_speed::banded_score_only
+    16.27%    15.91%  mapper   mapper                [.] mapper_speed::IndexView::extract_sequence
+    11.53%    11.53%  mapper   mapper                [.] mapper_speed::IndexView::offset_at
+     9.75%     9.75%  mapper   mapper                [.] std::__introsort_loop<__gnu_cxx::__normal_iterator<mapper_speed::SeedAnchor*, std::vector<mapper_speed::SeedAnchor, std::allocator<mapper_speed::SeedAnchor> > >, long, __gnu_cxx::__ops::_Iter_comp_iter<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::{lambda(mapper_speed::SeedAnchor const&, mapper_speed::SeedAnchor const&)#3}> >
+     9.22%     9.22%  mapper   mapper                [.] std::__introsort_loop<__gnu_cxx::__normal_iterator<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster*, std::vector<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster, std::allocator<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster> > >, long, __gnu_cxx::__ops::_Iter_comp_iter<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::{lambda(mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster const&, mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster const&)#5}> >
+     8.14%     0.00%  mapper   [unknown]             [.] 0xffffffffa4000b40
+     3.29%     3.16%  mapper   mapper                [.] mapper_speed::(anonymous namespace)::myers_popcnt
+     1.96%     1.85%  mapper   mapper                [.] mapper_speed::IndexView::count_mismatches_packed
+     1.86%     0.00%  mapper   [unknown]             [.] 0x000000000091e460
+     1.61%     1.50%  mapper   mapper                [.] mapper_speed::MapperEngine::collect_seeds
+     1.48%     1.48%  mapper   mapper                [.] std::vector<int, std::allocator<int> >::_M_fill_assign
+     1.31%     1.19%  mapper   mapper                [.] mapper_speed::IndexView::occurrence_count
+     1.21%     1.21%  mapper   mapper                [.] std::__adjust_heap<__gnu_cxx::__normal_iterator<mapper_speed::SeedAnchor*, std::vector<mapper_speed::SeedAnchor, std::allocator<mapper_speed::SeedAnchor> > >, long, mapper_speed::SeedAnchor, __gnu_cxx::__ops::_Iter_comp_iter<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::{lambda(mapper_speed::SeedAnchor const&, mapper_speed::SeedAnchor const&)#3}> >
+     1.10%     1.10%  mapper   mapper                [.] mapper_speed::MapperEngine::try_upfront_exactish
+     0.87%     0.87%  mapper   mapper                [.] mapper_speed::IndexView::chromosome_for_position
+     0.82%     0.82%  mapper   mapper                [.] std::__insertion_sort<__gnu_cxx::__normal_iterator<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster*, std::vector<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster, std::allocator<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster> > >, __gnu_cxx::__ops::_Iter_comp_iter<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::{lambda(mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster const&, mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster const&)#5}> >
+     0.60%     0.00%  mapper   [unknown]             [.] 0000000000000000
+     0.55%     0.32%  mapper   mapper                [.] mapper_speed::IndexView::chromosome
+     0.51%     0.51%  mapper   mapper                [.] std::__insertion_sort<__gnu_cxx::__normal_iterator<mapper_speed::SeedSpec*, std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > >, __gnu_cxx::__ops::_Iter_comp_iter<mapper_speed::MapperEngine::collect_seeds(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, int, std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> >&)::{lambda(mapper_speed::SeedSpec const&, mapper_speed::SeedSpec const&)#2}> >
+     0.47%     0.47%  mapper   libc.so.6             [.] __memchr_evex
+     0.46%     0.46%  mapper   mapper                [.] mapper_speed::MapperEngine::map_record[abi:cxx11]
+     0.45%     0.45%  mapper   libstdc++.so.6.0.29   [.] std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_replace_aux
+```
+

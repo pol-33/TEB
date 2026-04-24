@@ -1,0 +1,620 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 912  of event 'cycles:u'
+# Event count (approx.): 2268897868
+#
+# Children      Self  Command  Shared Object         Symbol                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         
+# ........  ........  .......  ....................  .................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................................
+#
+    19.97%    19.54%  mapper   mapper                [.] mapper_speed::MapperEngine::generate_candidates
+            |          
+             --7.05%--mapper_speed::MapperEngine::generate_candidates
+
+    19.66%     0.10%  mapper   mapper                [.] mapper_speed::MapperEngine::search_orientation
+            |          
+             --19.57%--mapper_speed::MapperEngine::search_orientation
+                       |          
+                       |--17.56%--mapper_speed::MapperEngine::prefilter_candidate
+                       |          |          
+                       |           --17.12%--mapper_speed::banded_score_only
+                       |                     |          
+                       |                      --1.48%--std::vector<int, std::allocator<int> >::_M_fill_assign
+                       |          
+                        --0.98%--mapper_speed::MapperEngine::try_upfront_exactish
+
+    17.65%     0.42%  mapper   mapper                [.] mapper_speed::MapperEngine::prefilter_candidate
+            |          
+             --17.24%--mapper_speed::MapperEngine::prefilter_candidate
+                       |          
+                        --17.12%--mapper_speed::banded_score_only
+                                  |          
+                                   --1.48%--std::vector<int, std::allocator<int> >::_M_fill_assign
+
+    17.12%    15.64%  mapper   mapper                [.] mapper_speed::banded_score_only
+            |          
+             --1.48%--mapper_speed::banded_score_only
+                       std::vector<int, std::allocator<int> >::_M_fill_assign
+
+    16.27%    15.91%  mapper   mapper                [.] mapper_speed::IndexView::extract_sequence
+            |          
+             --16.17%--mapper_speed::IndexView::extract_sequence
+                       |          
+                        --3.97%--0xffffffffa4000b40
+
+    11.53%    11.53%  mapper   mapper                [.] mapper_speed::IndexView::offset_at
+            |          
+             --10.86%--mapper_speed::IndexView::offset_at
+                       |          
+                        --2.58%--0xffffffffa4000b40
+
+     9.75%     9.75%  mapper   mapper                [.] std::__introsort_loop<__gnu_cxx::__normal_iterator<mapper_speed::SeedAnchor*, std::vector<mapper_speed::SeedAnchor, std::allocator<mapper_speed::SeedAnchor> > >, long, __gnu_cxx::__ops::_Iter_comp_iter<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::{lambda(mapper_speed::SeedAnchor const&, mapper_speed::SeedAnchor const&)#3}> >
+     9.22%     9.22%  mapper   mapper                [.] std::__introsort_loop<__gnu_cxx::__normal_iterator<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster*, std::vector<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster, std::allocator<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster> > >, long, __gnu_cxx::__ops::_Iter_comp_iter<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::{lambda(mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster const&, mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster const&)#5}> >
+     8.14%     0.00%  mapper   [unknown]             [.] 0xffffffffa4000b40
+            |
+            ---0xffffffffa4000b40
+
+     3.29%     3.16%  mapper   mapper                [.] mapper_speed::(anonymous namespace)::myers_popcnt
+            |          
+             --3.08%--mapper_speed::(anonymous namespace)::myers_popcnt
+
+     1.96%     1.85%  mapper   mapper                [.] mapper_speed::IndexView::count_mismatches_packed
+            |
+            ---mapper_speed::IndexView::count_mismatches_packed
+               |          
+                --0.56%--0xffffffffa4000b40
+
+     1.86%     0.00%  mapper   [unknown]             [.] 0x000000000091e460
+            |
+            ---0x91e460
+               |          
+                --1.51%--mapper_speed::MapperEngine::search_orientation
+                          |          
+                           --0.86%--mapper_speed::MapperEngine::try_upfront_exactish
+
+     1.61%     1.50%  mapper   mapper                [.] mapper_speed::MapperEngine::collect_seeds
+            |          
+             --1.03%--mapper_speed::MapperEngine::collect_seeds
+
+     1.48%     1.48%  mapper   mapper                [.] std::vector<int, std::allocator<int> >::_M_fill_assign
+     1.31%     1.19%  mapper   mapper                [.] mapper_speed::IndexView::occurrence_count
+            |          
+             --1.20%--mapper_speed::IndexView::occurrence_count
+
+     1.21%     1.21%  mapper   mapper                [.] std::__adjust_heap<__gnu_cxx::__normal_iterator<mapper_speed::SeedAnchor*, std::vector<mapper_speed::SeedAnchor, std::allocator<mapper_speed::SeedAnchor> > >, long, mapper_speed::SeedAnchor, __gnu_cxx::__ops::_Iter_comp_iter<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::{lambda(mapper_speed::SeedAnchor const&, mapper_speed::SeedAnchor const&)#3}> >
+            |
+            ---std::__adjust_heap<__gnu_cxx::__normal_iterator<mapper_speed::SeedAnchor*, std::vector<mapper_speed::SeedAnchor, std::allocator<mapper_speed::SeedAnchor> > >, long, mapper_speed::SeedAnchor, __gnu_cxx::__ops::_Iter_comp_iter<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::{lambda(mapper_speed::SeedAnchor const&, mapper_speed::SeedAnchor const&)#3}> >
+
+     1.10%     1.10%  mapper   mapper                [.] mapper_speed::MapperEngine::try_upfront_exactish
+     0.87%     0.87%  mapper   mapper                [.] mapper_speed::IndexView::chromosome_for_position
+            |          
+             --0.57%--mapper_speed::IndexView::chromosome_for_position
+
+     0.82%     0.82%  mapper   mapper                [.] std::__insertion_sort<__gnu_cxx::__normal_iterator<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster*, std::vector<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster, std::allocator<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster> > >, __gnu_cxx::__ops::_Iter_comp_iter<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::{lambda(mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster const&, mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster const&)#5}> >
+     0.60%     0.00%  mapper   [unknown]             [.] 0000000000000000
+            |
+            ---0
+
+     0.55%     0.32%  mapper   mapper                [.] mapper_speed::IndexView::chromosome
+     0.51%     0.51%  mapper   mapper                [.] std::__insertion_sort<__gnu_cxx::__normal_iterator<mapper_speed::SeedSpec*, std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > >, __gnu_cxx::__ops::_Iter_comp_iter<mapper_speed::MapperEngine::collect_seeds(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, int, std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> >&)::{lambda(mapper_speed::SeedSpec const&, mapper_speed::SeedSpec const&)#2}> >
+            |
+            ---std::__insertion_sort<__gnu_cxx::__normal_iterator<mapper_speed::SeedSpec*, std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > >, __gnu_cxx::__ops::_Iter_comp_iter<mapper_speed::MapperEngine::collect_seeds(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, int, std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> >&)::{lambda(mapper_speed::SeedSpec const&, mapper_speed::SeedSpec const&)#2}> >
+
+     0.47%     0.47%  mapper   libc.so.6             [.] __memchr_evex
+     0.46%     0.46%  mapper   mapper                [.] mapper_speed::MapperEngine::map_record[abi:cxx11]
+     0.45%     0.45%  mapper   libstdc++.so.6.0.29   [.] std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_replace_aux
+     0.42%     0.42%  mapper   mapper                [.] mapper_speed::IndexView::positions_for
+     0.35%     0.35%  mapper   mapper                [.] mapper_speed::build_myers_query
+     0.33%     0.23%  mapper   libstdc++.so.6.0.29   [.] std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::resize
+     0.22%     0.00%  mapper   [unknown]             [.] 0x000000000091e4d0
+     0.21%     0.00%  mapper   [unknown]             [.] 0x0000000000056c11
+     0.21%     0.00%  mapper   [unknown]             [.] 0x000000000092bf30
+     0.14%     0.00%  mapper   [unknown]             [.] 0x00180009b80ba80c
+     0.13%     0.00%  mapper   [unknown]             [.] 0x20f98a7d00030002
+     0.13%     0.00%  mapper   [unknown]             [.] 0x00170006af194a96
+     0.13%     0.00%  mapper   [unknown]             [.] 0x0f396a3200000001
+     0.13%     0.00%  mapper   [unknown]             [.] 0x211f4c9500030001
+     0.13%     0.00%  mapper   [unknown]             [.] 0x5e8d49e200030001
+     0.13%     0.00%  mapper   [unknown]             [.] 0x0000004000000196
+     0.13%     0.00%  mapper   [unknown]             [.] 0xaee4f75200170004
+     0.13%     0.00%  mapper   [unknown]             [.] 0x000000400000003a
+     0.13%     0.00%  mapper   [unknown]             [.] 0x0000000008891797
+     0.13%     0.00%  mapper   [unknown]             [.] 0x115918ee00010001
+     0.13%     0.00%  mapper   [unknown]             [.] 0x00110003845b295e
+     0.13%     0.00%  mapper   [unknown]             [.] 0x00170005af04e12a
+     0.13%     0.00%  mapper   [unknown]             [.] 0x0000004000000187
+     0.13%     0.00%  mapper   [unknown]             [.] 0x000000200000012d
+     0.13%     0.00%  mapper   [unknown]             [.] 0x00000002000000f7
+     0.13%     0.00%  mapper   [unknown]             [.] 0x00000028000000ae
+     0.13%     0.00%  mapper   [unknown]             [.] 0x000000580000002c
+     0.13%     0.00%  mapper   [unknown]             [.] 0x00170005b22055e9
+     0.13%     0.00%  mapper   [unknown]             [.] 0x000400012b98510d
+     0.13%     0.00%  mapper   [unknown]             [.] 0x0000002000000163
+     0.13%     0.00%  mapper   [unknown]             [.] 0x0000000c00000151
+     0.13%     0.00%  mapper   [unknown]             [.] 0x00080001410a8d29
+     0.13%     0.00%  mapper   [unknown]             [.] 0x000000040000004d
+     0.13%     0.00%  mapper   [unknown]             [.] 0x0008000440f3d524
+     0.13%     0.00%  mapper   [unknown]             [.] 0x00170002af148301
+     0.13%     0.00%  mapper   [unknown]             [.] 0x0003000420f80d04
+     0.13%     0.00%  mapper   [unknown]             [.] 0x00000020000001a1
+     0.13%     0.00%  mapper   [unknown]             [.] 0x00170005aef991f9
+     0.13%     0.00%  mapper   [unknown]             [.] 0x3c3d3e4500070001
+     0.13%     0.00%  mapper   [unknown]             [.] 0x382d3cc700020001
+     0.13%     0.00%  mapper   [unknown]             [.] 0x001000057bc6a6e7
+     0.13%     0.00%  mapper   [unknown]             [.] 0x000e000362a62cb4
+     0.13%     0.00%  mapper   [unknown]             [.] 0x0000000800000004
+     0.13%     0.00%  mapper   [unknown]             [.] 0x00000050000001ac
+     0.13%     0.00%  mapper   [unknown]             [.] 0x1159390a00000001
+     0.13%     0.00%  mapper   [unknown]             [.] 0x95373ccf00130002
+     0.13%     0.00%  mapper   [unknown]             [.] 0x3c3e0c1400070001
+     0.13%     0.00%  mapper   [unknown]             [.] 0x221b1bde00030001
+     0.13%     0.00%  mapper   [unknown]             [.] 0x0f2dd90800000001
+     0.13%     0.00%  mapper   [unknown]             [.] 0x00000004000001b8
+     0.13%     0.00%  mapper   [unknown]             [.] 0x0bd35523005e0001
+     0.13%     0.00%  mapper   [unknown]             [.] 0x00170001af06368e
+     0.13%     0.00%  mapper   [unknown]             [.] 0x08892a9900000004
+     0.13%     0.00%  mapper   [unknown]             [.] 0xaefb2e8500170004
+     0.13%     0.00%  mapper   [unknown]             [.] 0x0008000840e5796e
+     0.13%     0.00%  mapper   [unknown]             [.] 0x3c28012a00070001
+     0.13%     0.00%  mapper   [unknown]             [.] 0x0889526500000002
+     0.13%     0.00%  mapper   [unknown]             [.] 0x00000101000000d4
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00190001b81fc6dd
+     0.12%     0.00%  mapper   [unknown]             [.] 0x20fd16ad00030002
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0008000440f94571
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00210008b84edec2
+     0.12%     0.00%  mapper   [unknown]             [.] 0x3c4288d200070004
+     0.12%     0.00%  mapper   [unknown]             [.] 0xaef5922a00170004
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00000040000001ba
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170000aeff41dd
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000000040000016e
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170003aefa42e7
+     0.12%     0.00%  mapper   [unknown]             [.] 0x57bdbc92000b0003
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000005500000004
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000700053c4f4fa4
+     0.12%     0.00%  mapper   [unknown]             [.] 0x8da79e34002c0001
+     0.12%     0.12%  mapper   mapper                [.] std::__insertion_sort<__gnu_cxx::__normal_iterator<mapper_speed::PrefilterCandidate*, std::vector<mapper_speed::PrefilterCandidate, std::allocator<mapper_speed::PrefilterCandidate> > >, __gnu_cxx::__ops::_Iter_comp_iter<mapper_speed::MapperEngine::search_orientation(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::vector<unsigned char, std::allocator<unsigned char> > const&, bool, int, std::vector<mapper_speed::AlignmentHit, std::allocator<mapper_speed::AlignmentHit> >&)::{lambda(mapper_speed::PrefilterCandidate const&, mapper_speed::PrefilterCandidate const&)#1}> >
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000000000170004
+     0.12%     0.00%  mapper   [unknown]             [.] 0x1155429d00000002
+     0.12%     0.00%  mapper   [unknown]             [.] 0xaee8231e00170003
+     0.12%     0.00%  mapper   [unknown]             [.] 0x94ab474300080002
+     0.12%     0.00%  mapper   [unknown]             [.] 0x3ff821ec00080001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000004000000121
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00000020000000c1
+     0.12%     0.00%  mapper   [unknown]             [.] 0x113fcdd500010002
+     0.12%     0.00%  mapper   [unknown]             [.] 0x3c2b32dd00010001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x3c45d1fa00070005
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0889928400000001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x1bea19ef008e0003
+     0.12%     0.12%  mapper   libstdc++.so.6.0.29   [.] 0x000000000009f554
+     0.12%     0.00%  mapper   libstdc++.so.6.0.29   [.] std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_create
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170004aef0b82e
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0775e3ee00130001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000005500000055
+     0.12%     0.00%  mapper   [unknown]             [.] 0x11397b4200010002
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000000194d1759e
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000000601ceedbb
+     0.12%     0.00%  mapper   [unknown]             [.] 0xa5c6005300150002
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000800034106ed51
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0742253307422532
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00000280000001c3
+     0.12%     0.00%  mapper   [unknown]             [.] 0x3c4f317100070001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000008900000059
+     0.12%     0.00%  mapper   [unknown]             [.] 0x1c4d4db700020001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000008000000200
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000004000000003a
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170007af11a664
+     0.12%     0.00%  mapper   [unknown]             [.] 0xa5b9878100150003
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0008000140f8528b
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000000400000147
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000a000249ef622e
+     0.12%     0.00%  mapper   [unknown]             [.] 0xb8a4e35600440001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000000f00000001b
+     0.12%     0.00%  mapper   [unknown]             [.] 0x020fe0af3c25cbf0
+     0.12%     0.00%  mapper   [unknown]             [.] 0x40c6c9d900180001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170004aefc4f0c
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170000af02c0c6
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170002af15247d
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000700053c595ae3
+     0.12%     0.00%  mapper   [unknown]             [.] 0x075972ee00000002
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000000820000018f
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000000100000019d
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000000040000006b
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0006000439b1354f
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170001aef598bf
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000000000002da7f
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000001000000003d
+     0.12%     0.12%  mapper   libc.so.6             [.] __memmove_avx512_unaligned_erms
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000000807761a22
+     0.12%     0.00%  mapper   [unknown]             [.] 0xaefedf9d00170004
+     0.12%     0.00%  mapper   [unknown]             [.] 0x9c3ff76400130001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x9902054500100001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00000080000001da
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00000004000001ff
+     0.12%     0.00%  mapper   [unknown]             [.] 0x3c265da900000001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x52737aa5000b0002
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00000024000001af
+     0.12%     0.00%  mapper   [unknown]             [.] 0x5d03f01a00010001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00000004000001a8
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000000020000002d
+     0.12%     0.00%  mapper   [unknown]             [.] 0xa5c165bb00150003
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0775ecc8004c0001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00000018000001ad
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000b0005522a8292
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0012000087ac74b7
+     0.12%     0.00%  mapper   [unknown]             [.] 0x5fbf81e1000d0003
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000000080000000c
+     0.12%     0.00%  mapper   [unknown]             [.] 0x001100017ec8139a
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000c00025b5ae85d
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00000008000001a8
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170002af0e2567
+     0.12%     0.00%  mapper   [unknown]             [.] 0x1158d7ce00010002
+     0.12%     0.00%  mapper   [unknown]             [.] 0x3c4588a100070002
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000f00046a282979
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000001100000010
+     0.12%     0.00%  mapper   [unknown]             [.] 0xb84eeb2f001c0001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0008000140fbb690
+     0.12%     0.00%  mapper   [unknown]             [.] 0x077622af004c0004
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000000600000009
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170000af029b13
+     0.12%     0.00%  mapper   [unknown]             [.] 0xb8ae893600000003
+     0.12%     0.00%  mapper   [unknown]             [.] 0x64c0ec0f00050001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000008000000144
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170001af157de6
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170002aef618b6
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170004aede594a
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0017000aaf1423ee
+     0.12%     0.00%  mapper   [unknown]             [.] 0xb2faac0200130001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000700053c3e11f1
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000002000000040
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000000400000014d
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170005aee33052
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170006af08f0fc
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000000400000017
+     0.12%     0.12%  mapper   [unknown]             [k] 0xffffffffa400108d
+     0.12%     0.00%  mapper   [unknown]             [.] 0x1155554b00000002
+     0.12%     0.00%  mapper   [unknown]             [.] 0x06437a2333e3c6c9
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000000100000113
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170001aeedb7dc
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00000200000001cd
+     0.12%     0.00%  mapper   [unknown]             [.] 0x6a338815000f0001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x07760c8d07760c8c
+     0.12%     0.00%  mapper   [unknown]             [.] 0x6a471096000f0003
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170006af134389
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000003600000016
+     0.12%     0.00%  mapper   [unknown]             [.] 0x07746b6a00440001
+     0.12%     0.12%  mapper   libc.so.6             [.] unlink_chunk.constprop.0
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0766bce70766bce6
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000700043c5b6ac7
+     0.12%     0.00%  mapper   [unknown]             [.] 0x3eb030df00010001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000001800000026
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170003aee8ed2b
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000000030000007a
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170002aedbe7dc
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170002af12f613
+     0.12%     0.00%  mapper   [unknown]             [.] 0xaef3057500170003
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000002800000012a
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0008000540fb85c8
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170001af069fde
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00170006af159aaf
+     0.12%     0.00%  mapper   [unknown]             [.] 0x94b3222a000f0001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x00000098000001bd
+     0.12%     0.00%  mapper   [unknown]             [.] 0x435abfc900080001
+     0.12%     0.00%  mapper   [unknown]             [.] 0x000b0007562bd2b0
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0000002000000025
+     0.12%     0.00%  mapper   [unknown]             [.] 0x001b0005b83916d1
+     0.12%     0.00%  mapper   [unknown]             [.] 0x0551441a32f190c0
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000002000000003f
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0000014000000163
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000002000000013e
+     0.11%     0.00%  mapper   [unknown]             [.] 0x1053ac5b00100001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0286a9a7216447f8
+     0.11%     0.00%  mapper   [unknown]             [.] 0x4b894fd8000a0001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0000001000000087
+     0.11%     0.00%  mapper   [unknown]             [.] 0x004c0009b8ae8c1a
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170001af12eef4
+     0.11%     0.00%  mapper   [unknown]             [.] 0x40e56d4400080002
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000100091158ddf8
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0000000400000038
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170002aef099f8
+     0.11%     0.00%  mapper   [unknown]             [.] 0x001100087eec280e
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0003000625aa146b
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000000200000004a
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170005aee5533a
+     0.11%     0.11%  mapper   mapper                [.] std::__insertion_sort<__gnu_cxx::__normal_iterator<mapper_speed::SeedSpec*, std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > >, __gnu_cxx::__ops::_Iter_comp_iter<mapper_speed::MapperEngine::collect_seeds(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, int, std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> >&)::{lambda(mapper_speed::SeedSpec const&, mapper_speed::SeedSpec const&)#1}> >
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170007af0b353d
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170000af0e9bc0
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0889259500000004
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00080006410128f2
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000700013af40ceb
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0000004100000096
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000000420000014d
+     0.11%     0.00%  mapper   [unknown]             [.] 0x1712a71b00010001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0004000027c73c26
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170003aede46fa
+     0.11%     0.00%  mapper   [unknown]             [.] 0x94adeca900130001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000b000357309f58
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170000aee1189c
+     0.11%     0.00%  mapper   [unknown]             [.] 0xb8a1882200130001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x05fc10ab24d9aefc
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000000400000001d
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170003af142d44
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000000400000008c
+     0.11%     0.00%  mapper   [unknown]             [.] 0x2117da3200020001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x07739d3800170002
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0000000c00000007
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00180008b5cd1c39
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000000050000019f
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0000000200000147
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000f00026a639ea1
+     0.11%     0.11%  mapper   mapper                [.] mapper_speed::MapperEngine::verify_candidate
+     0.11%     0.00%  mapper   [unknown]             [.] 0x4147544147544147
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0000000000000065
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000004000000016b
+     0.11%     0.00%  mapper   [unknown]             [.] 0x5ee2a122000b0001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00000800000001d3
+     0.11%     0.00%  mapper   [unknown]             [.] 0x3c27d93a00150002
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000000800000018a
+     0.11%     0.00%  mapper   [unknown]             [.] 0xaee9ba3600170003
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0000002000000001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000000d0000001a0
+     0.11%     0.00%  mapper   [unknown]             [.] 0x08896b5d00000001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00000180000000e5
+     0.11%     0.00%  mapper   [unknown]             [.] 0x07761df200000001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000000200000018a
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000b0004578852b6
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0776141407761413
+     0.11%     0.00%  mapper   [unknown]             [.] 0x40e1773d00080002
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0008000340eb9a6c
+     0.11%     0.00%  mapper   [unknown]             [.] 0xaee2fcd600170004
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000000040000017e
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170008aee4a54b
+     0.11%     0.00%  mapper   [unknown]             [.] 0x115564b400010001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000a00054abf35a3
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170005aec3d242
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0000000107620bc3
+     0.11%     0.00%  mapper   [unknown]             [.] 0x3525693e00060003
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170000aefe59fc
+     0.11%     0.00%  mapper   [unknown]             [.] 0xa1372eed00140001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00150002a5b8701b
+     0.11%     0.00%  mapper   [unknown]             [.] 0xaede257200170004
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00000802000000c7
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000000070000016c
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0012000089230c6b
+     0.11%     0.00%  mapper   [unknown]             [.] 0x40f3dca200080003
+     0.11%     0.00%  mapper   [unknown]             [.] 0x074ca27d000f0003
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000000a0000001a5
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00420007b8a0fbca
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170003af091c8e
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0000002700000001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x02c5c15b19961d8e
+     0.11%     0.00%  mapper   [unknown]             [.] 0x949ac39100070001
+     0.11%     0.00%  mapper   [unknown]             [.] 0xaef18e8a00170005
+     0.11%     0.00%  mapper   [unknown]             [.] 0xa51b5dc5000f0001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0888f2e200000002
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0007000a3c3dd72f
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170004af004ceb
+     0.11%     0.00%  mapper   [unknown]             [.] 0x8190333400110001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0292954f11695b54
+     0.11%     0.00%  mapper   [unknown]             [.] 0x2115d1e700030002
+     0.11%     0.00%  mapper   [unknown]             [.] 0xb80da43100180002
+     0.11%     0.00%  mapper   [unknown]             [.] 0x020f98ad3c2583ee
+     0.11%     0.00%  mapper   [unknown]             [.] 0x9498fd99000e0001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x40d4b33d00080003
+     0.11%     0.00%  mapper   [unknown]             [.] 0x074fd167074fd166
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00000002000001c5
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0000000500000081
+     0.11%     0.00%  mapper   [unknown]             [.] 0x008837b20f5efdb7
+     0.11%     0.00%  mapper   [unknown]             [.] 0xb8a8934f00470001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00000200000001bf
+     0.11%     0.00%  mapper   [unknown]             [.] 0xaf133ff500170004
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170004af0eaa8a
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00000200000000c7
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170000af0e90cc
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000b000851658205
+     0.11%     0.00%  mapper   [unknown]             [.] 0x001200048d6e582c
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0775ff6000000001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170000af061880
+     0.11%     0.00%  mapper   [unknown]             [.] 0x2ff0315a00050001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0010000073b1af71
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00010006113909ec
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00000003076ea994
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0000002c00000136
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00000055000000c2
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000000e0000001bc
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0000004000000135
+     0.11%     0.00%  mapper   [unknown]             [.] 0x08897c5100000004
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00000060000001bb
+     0.11%     0.00%  mapper   [unknown]             [.] 0x001200018a50ae35
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000000080000013c
+     0.11%     0.00%  mapper   [unknown]             [.] 0xaefa697100170003
+     0.11%     0.00%  mapper   [unknown]             [.] 0x20f6ecf500030002
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170000af0fa284
+     0.11%     0.00%  mapper   [unknown]             [.] 0xaefc588a00170003
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00180006b546d66c
+     0.11%     0.00%  mapper   [unknown]             [.] 0x037f2f63aedc7acd
+     0.11%     0.00%  mapper   [unknown]             [.] 0xaf16d6b900170002
+     0.11%     0.00%  mapper   [unknown]             [.] 0xb89b165b00100001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00000004000001a6
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0889897b00000002
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000001000000017c
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00000080000000fa
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00000010000001bf
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0008000640e9be71
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00130006946cfc69
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0013000994aca880
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00000010000001ca
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170004aefc1c79
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000b000851ced3f7
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00000002000001aa
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000000000770a241
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0d33a10d00000001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0000002000000005
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00000080000000f8
+     0.11%     0.00%  mapper   [unknown]             [.] 0x3c429ce700070002
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170001aeeb2c39
+     0.11%     0.00%  mapper   [unknown]             [.] 0x001c0005b83f594d
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0000000007468e4d
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000000600000008f
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00130003949aa208
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0000004000000019
+     0.11%     0.00%  mapper   [unknown]             [.] 0x11555653004c0001
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00000010000000a0
+     0.11%     0.00%  mapper   [unknown]             [.] 0x0000000300000159
+     0.11%     0.00%  mapper   [unknown]             [.] 0x000b0006523f646d
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170000aedbaffe
+     0.11%     0.00%  mapper   [unknown]             [.] 0x00170005aee45231
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0d6cb30100000001
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00000010000001e4
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0000007800000142
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0002000019fd24e2
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00000040000000a7
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0000011000000019
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00420006b8a1a2e6
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00000140000000ce
+     0.10%     0.00%  mapper   [unknown]             [.] 0x7eebe79e00070002
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00000018000001b7
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0008000040da20cb
+     0.10%     0.10%  mapper   mapper                [.] std::__adjust_heap<__gnu_cxx::__normal_iterator<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster*, std::vector<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster, std::allocator<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster> > >, long, mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster, __gnu_cxx::__ops::_Iter_comp_iter<mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::{lambda(mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster const&, mapper_speed::MapperEngine::generate_candidates(std::vector<mapper_speed::SeedSpec, std::allocator<mapper_speed::SeedSpec> > const&, unsigned long, int, std::vector<mapper_speed::CandidateInfo, std::allocator<mapper_speed::CandidateInfo> >&)::ChainCluster const&)#5}> >
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0000000400000001
+     0.10%     0.00%  mapper   [unknown]             [.] 0x000700093c25aefa
+     0.10%     0.00%  mapper   [unknown]             [.] 0xaee58a9e00170004
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0002000419f98791
+     0.10%     0.00%  mapper   [unknown]             [.] 0x1158f3bd00010003
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00440005b8a4caca
+     0.10%     0.00%  mapper   [unknown]             [.] 0xaee8cc7500170003
+     0.10%     0.00%  mapper   [unknown]             [.] 0x000000080000014c
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00000007088a27de
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00170000af0d4fd0
+     0.10%     0.00%  mapper   [unknown]             [.] 0x075f82ed00000001
+     0.10%     0.00%  mapper   [unknown]             [.] 0x000001000000014a
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00000100000001c4
+     0.10%     0.00%  mapper   [unknown]             [.] 0xb17c5f3200170001
+     0.10%     0.00%  mapper   [unknown]             [.] 0x1155490300000001
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0000008500000025
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00170006af10b181
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0000000100000191
+     0.10%     0.00%  mapper   [unknown]             [.] 0x3c5dcfd300b10004
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00170003af0b1271
+     0.10%     0.00%  mapper   [unknown]             [.] 0x075e67c400000001
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00170005af1392ad
+     0.10%     0.00%  mapper   [unknown]             [.] 0x077614c1077614c0
+     0.10%     0.00%  mapper   [unknown]             [.] 0x9fd5898200170001
+     0.10%     0.00%  mapper   [unknown]             [.] 0x1158deda00000002
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00170000af11b8f2
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00420009b8a1b824
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00000004000000bb
+     0.10%     0.00%  mapper   [unknown]             [.] 0x000000080000016b
+     0.10%     0.00%  mapper   [unknown]             [.] 0x000000230000003d
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00000010000000aa
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0000000400000152
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0000000108898502
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0402460e00000002
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00170004aef18c7b
+     0.10%     0.00%  mapper   libstdc++.so.6.0.29   [.] 0x00007fb6866dd2a0
+     0.10%     0.00%  mapper   [unknown]             [.] 0x94ae7ecf00130001
+     0.10%     0.00%  mapper   [unknown]             [.] 0x708eee12000f0001
+     0.10%     0.00%  mapper   [unknown]             [.] 0x076c980500000001
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0000001000000133
+     0.10%     0.00%  mapper   [unknown]             [.] 0x000000c000000174
+     0.10%     0.00%  mapper   [unknown]             [.] 0x000000020000014e
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00000003076b8c2f
+     0.10%     0.00%  mapper   [unknown]             [.] 0x20f9279200030002
+     0.10%     0.00%  mapper   [unknown]             [.] 0x3c27d8da00060002
+     0.10%     0.00%  mapper   [unknown]             [.] 0xaeea840900170003
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00170006aef5a49a
+     0.10%     0.00%  mapper   [unknown]             [.] 0x80dc9ffe00110001
+     0.10%     0.00%  mapper   [unknown]             [.] 0x03c4fd6600000001
+     0.10%     0.00%  mapper   [unknown]             [.] 0x000000620000000e
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0776011f00000001
+     0.10%     0.00%  mapper   [unknown]             [.] 0x40e5e63300080002
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00000006007a34a0
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00170007af159ab0
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00420009b8a1a84c
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00170001aee7a12c
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00170009af09fb57
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0000008000000132
+     0.10%     0.00%  mapper   [unknown]             [.] 0x2c17201e00040001
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00400002b89e0730
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0000002e000001a2
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0000004000000109
+     0.10%     0.00%  mapper   [unknown]             [.] 0x3c3e08e900070002
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0000001000000062
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0889f0be00000001
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0762f7a70762f7a6
+     0.10%     0.10%  mapper   libc.so.6             [.] _int_malloc
+     0.10%     0.00%  mapper   [unknown]             [.] 0x04e3c3e323c16234
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00000008000000f9
+     0.10%     0.10%  mapper   libc.so.6             [.] _int_free
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0775f45e00000002
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00170004aded7329
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00000020000001c8
+     0.10%     0.00%  mapper   [unknown]             [.] 0x3c259f1700070003
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0000000e00000118
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00170004af10181a
+     0.10%     0.00%  mapper   [unknown]             [.] 0x000000880000008f
+     0.10%     0.10%  mapper   mapper                [.] mapper_speed::MapperEngine::format_record[abi:cxx11]
+     0.10%     0.00%  mapper   [unknown]             [.] 0x3936323738372e37
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0000000000000013
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0888ede600000003
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00000002000001a9
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00170004af00a569
+     0.10%     0.00%  mapper   [unknown]             [.] 0x00000008000001ad
+     0.10%     0.00%  mapper   [unknown]             [.] 0x08897bb700000002
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0008000540e2925f
+     0.10%     0.00%  mapper   [unknown]             [.] 0x000700063c5b6f29
+     0.10%     0.00%  mapper   [unknown]             [.] 0xa6b9117f00110001
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0889ba5200000002
+     0.10%     0.00%  mapper   [unknown]             [.] 0x08894e6a00000003
+     0.10%     0.00%  mapper   [unknown]             [.] 0x3c5e04ed00070002
+     0.10%     0.00%  mapper   [unknown]             [.] 0x0000004000000188
+     0.10%     0.00%  mapper   [unknown]             [.] 0x88695a98000b0001
+     0.10%     0.00%  mapper   [unknown]             [.] 0xa6b972bf00150002
+     0.10%     0.00%  mapper   [unknown]             [.] 0x074f554c00000001
+     0.10%     0.10%  mapper   mapper                [.] std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::resize@plt
+     0.09%     0.00%  mapper   [unknown]             [.] 0x73a376be00100002
+     0.09%     0.00%  mapper   [unknown]             [.] 0x000100091148e6b3
+     0.09%     0.00%  mapper   [unknown]             [.] 0x0743696e00000003
+     0.09%     0.00%  mapper   [unknown]             [.] 0x2635079100030001
+     0.09%     0.00%  mapper   [unknown]             [.] 0x0000000400000009
+     0.09%     0.00%  mapper   [unknown]             [.] 0x0000000005b97f4a
+     0.09%     0.00%  mapper   [unknown]             [.] 0x0000008000000111
+     0.09%     0.00%  mapper   [unknown]             [.] 0x9ee43f7e00140002
+     0.09%     0.00%  mapper   [unknown]             [.] 0x002c000bb86f5942
+     0.09%     0.00%  mapper   [unknown]             [.] 0x0e5cc10600000001
+     0.09%     0.00%  mapper   [unknown]             [.] 0xa5c07c5900150003
+     0.09%     0.00%  mapper   [unknown]             [.] 0x000000040000008b
+     0.09%     0.00%  mapper   [unknown]             [.] 0x0889f78500000002
+     0.09%     0.00%  mapper   [unknown]             [.] 0x281f8b4f00030001
+     0.09%     0.00%  mapper   [unknown]             [.] 0x088a17c500000001
+     0.09%     0.00%  mapper   [unknown]             [.] 0x76d6c88a00090001
+     0.09%     0.00%  mapper   [unknown]             [.] 0xaf17022b00170002
+     0.09%     0.00%  mapper   [unknown]             [.] 0x00170002aef1fa12
+     0.09%     0.00%  mapper   [unknown]             [.] 0x0000000800000071
+     0.09%     0.00%  mapper   [unknown]             [.] 0x0740c52f00000001
+     0.08%     0.00%  mapper   [unknown]             [.] 0x0000002200000051
+     0.08%     0.00%  mapper   [unknown]             [.] 0x0000000200000170
+     0.08%     0.00%  mapper   [unknown]             [.] 0x0000003000000080
+     0.08%     0.00%  mapper   [unknown]             [.] 0xa75e61f500140001
+     0.08%     0.00%  mapper   [unknown]             [.] 0x0a2367e600000002
+     0.08%     0.00%  mapper   [unknown]             [.] 0x0013000894647b51
+     0.08%     0.00%  mapper   [unknown]             [.] 0x0382bce437846510
+     0.08%     0.00%  mapper   [unknown]             [.] 0x0002000019dfc974
+     0.08%     0.00%  mapper   [unknown]             [.] 0x0000020000000154
+     0.06%     0.06%  mapper   libc.so.6             [.] __memset_avx512_unaligned_erms
+     0.06%     0.00%  mapper   [unknown]             [.] 0x51254e6c00080001
+     0.05%     0.05%  mapper   ld-linux-x86-64.so.2  [.] memmove
+     0.05%     0.00%  mapper   [unknown]             [.] 0x6c00362e6f732e2b
+     0.05%     0.00%  mapper   ld-linux-x86-64.so.2  [.] _dl_map_object
+     0.04%     0.04%  mapper   ld-linux-x86-64.so.2  [.] _dl_lookup_symbol_x
+     0.04%     0.00%  mapper   [unknown]             [.] 0x00000000001abac0
+     0.04%     0.04%  mapper   ld-linux-x86-64.so.2  [.] do_lookup_x
+     0.00%     0.00%  mapper   ld-linux-x86-64.so.2  [.] _dl_start
+     0.00%     0.00%  mapper   ld-linux-x86-64.so.2  [.] _dl_start_user
+     0.00%     0.00%  mapper   ld-linux-x86-64.so.2  [.] _start
+
+
+#
+# (Tip: Save output of perf stat using: perf stat record <target workload>)
+#

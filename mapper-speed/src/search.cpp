@@ -16,6 +16,8 @@ constexpr std::size_t kMaxDpFinalistsPerOrientation = 10;
 constexpr std::size_t kMaxCandidatePrefilterPerOrientation = 20;
 constexpr std::size_t kDenseFullSeedProbeLimit = 192;
 constexpr std::size_t kDenseSampledSeedProbeCount = 48;
+constexpr std::size_t kSeedOccurrenceExpandLimitPrimary = 1024;
+constexpr std::size_t kSeedOccurrenceExpandLimitSecondary = 256;
 constexpr uint32_t kSeedMinSpacing = 10;
 constexpr uint32_t kNearDuplicateTolerance = 10;
 constexpr uint32_t kCandidateClusterSlack = 3;
@@ -309,23 +311,61 @@ void MapperEngine::generate_candidates(const std::vector<SeedSpec>& seeds,
     const uint32_t min_ref_len = read_length > static_cast<std::size_t>(max_errors)
         ? static_cast<uint32_t>(read_length - static_cast<std::size_t>(max_errors))
         : 1u;
+    const bool dense_index = index_.index_stride() == 1u;
+
+    auto occurrence_expand_limit = [&](std::size_t seed_rank, uint32_t frequency) -> std::size_t {
+        std::size_t limit = (seed_rank < 2u) ? kSeedOccurrenceExpandLimitPrimary : kSeedOccurrenceExpandLimitSecondary;
+        if (dense_index) {
+            limit = std::max<std::size_t>(64u, limit / 2u);
+        }
+        if (frequency <= 32u) {
+            limit = std::max<std::size_t>(limit, static_cast<std::size_t>(frequency));
+        }
+        return limit;
+    };
+
+    auto expand_occurrence = [&](uint16_t seed_index, uint16_t chrom_index, uint32_t hit_pos) {
+        const SeedSpec& seed = seeds[seed_index];
+        const auto& chrom = index_.chromosome(chrom_index);
+        const int64_t base_candidate = static_cast<int64_t>(hit_pos) - static_cast<int64_t>(seed.read_offset);
+        const int64_t min_start = static_cast<int64_t>(chrom.start);
+        const int64_t max_start =
+            static_cast<int64_t>(chrom.start) + static_cast<int64_t>(chrom.length) - static_cast<int64_t>(min_ref_len);
+        const int64_t delta_min = std::max<int64_t>(-max_errors, min_start - base_candidate);
+        const int64_t delta_max = std::min<int64_t>(max_errors, max_start - base_candidate);
+        if (delta_min > delta_max) {
+            return;
+        }
+        for (int64_t delta = delta_min; delta <= delta_max; ++delta) {
+            scratch_anchors_.push_back(
+                SeedAnchor{static_cast<uint32_t>(base_candidate + delta), seed_index, chrom_index});
+        }
+    };
 
     for (uint16_t seed_index = 0; seed_index < seeds.size(); ++seed_index) {
         const SeedSpec& seed = seeds[seed_index];
         const auto range = index_.positions_for(seed.key);
-        for (const uint32_t* it = range.first; it != range.second; ++it) {
-            const int64_t base_candidate = static_cast<int64_t>(*it) - static_cast<int64_t>(seed.read_offset);
-            for (int delta = -max_errors; delta <= max_errors; ++delta) {
-                const int64_t candidate = base_candidate + delta;
-                if (candidate < 0) {
-                    continue;
-                }
-                const uint32_t start = static_cast<uint32_t>(candidate);
-                if (static_cast<uint64_t>(start) + min_ref_len > index_.genome_length()) {
-                    continue;
-                }
-                scratch_anchors_.push_back(SeedAnchor{start, seed_index, 0});
+        const std::size_t occurrence_count = static_cast<std::size_t>(range.second - range.first);
+        const std::size_t expand_limit = occurrence_expand_limit(seed_index, seed.frequency);
+        if (occurrence_count <= expand_limit) {
+            for (const uint32_t* it = range.first; it != range.second; ++it) {
+                const uint16_t chrom_index =
+                    static_cast<uint16_t>(index_.chromosome_for_position(*it));
+                expand_occurrence(seed_index, chrom_index, *it);
             }
+            continue;
+        }
+
+        for (std::size_t i = 0; i < expand_limit; ++i) {
+            const uint64_t numerator =
+                static_cast<uint64_t>(i) * static_cast<uint64_t>(occurrence_count - 1u) +
+                static_cast<uint64_t>(expand_limit - 1u) / 2u;
+            const std::size_t sample_index =
+                static_cast<std::size_t>(numerator / static_cast<uint64_t>(expand_limit - 1u));
+            const uint32_t hit_pos = range.first[sample_index];
+            const uint16_t chrom_index =
+                static_cast<uint16_t>(index_.chromosome_for_position(hit_pos));
+            expand_occurrence(seed_index, chrom_index, hit_pos);
         }
     }
 
@@ -335,8 +375,19 @@ void MapperEngine::generate_candidates(const std::vector<SeedSpec>& seeds,
 
     std::sort(scratch_anchors_.begin(), scratch_anchors_.end(),
               [](const SeedAnchor& lhs, const SeedAnchor& rhs) {
-                  return lhs.start < rhs.start;
+                  if (lhs.start != rhs.start) {
+                      return lhs.start < rhs.start;
+                  }
+                  return lhs.chrom_index < rhs.chrom_index;
               });
+
+    scratch_anchors_.erase(std::unique(scratch_anchors_.begin(), scratch_anchors_.end(),
+                                       [](const SeedAnchor& lhs, const SeedAnchor& rhs) {
+                                           return lhs.start == rhs.start &&
+                                                  lhs.seed_index == rhs.seed_index &&
+                                                  lhs.chrom_index == rhs.chrom_index;
+                                       }),
+                           scratch_anchors_.end());
 
     struct ChainCluster {
         uint32_t min_start = 0;
@@ -354,7 +405,7 @@ void MapperEngine::generate_candidates(const std::vector<SeedSpec>& seeds,
     clusters.reserve(scratch_anchors_.size());
 
     for (const SeedAnchor& anchor : scratch_anchors_) {
-        const uint16_t chrom_index = static_cast<uint16_t>(index_.chromosome_for_position(anchor.start));
+        const uint16_t chrom_index = anchor.chrom_index;
         const SeedSpec& seed = seeds[anchor.seed_index];
         if (!clusters.empty()) {
             ChainCluster& cluster = clusters.back();

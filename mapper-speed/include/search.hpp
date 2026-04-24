@@ -42,7 +42,7 @@ struct PrefilterCandidate {
 struct SeedAnchor {
     uint32_t start = 0;
     uint16_t seed_index = 0;
-    uint16_t reserved = 0;
+    uint16_t chrom_index = 0;
 };
 
 class MapperEngine {

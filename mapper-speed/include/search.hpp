@@ -52,6 +52,18 @@ struct SeedAnchor {
     uint16_t chrom_index = 0;
 };
 
+struct CandidateCluster {
+    uint32_t min_start = 0;
+    uint32_t max_start = 0;
+    uint32_t best_seed_freq = 0xFFFFFFFFu;
+    uint32_t seed_mask = 0;
+    uint16_t anchor_count = 0;
+    uint16_t unique_seed_count = 0;
+    uint32_t min_read_offset = 0xFFFFFFFFu;
+    uint32_t max_read_offset = 0;
+    uint16_t chrom_index = 0;
+};
+
 class MapperEngine {
 public:
     explicit MapperEngine(const IndexView& index);
@@ -103,6 +115,7 @@ private:
     std::vector<SeedSpec> scratch_seed_candidates_;
     std::vector<SeedSpec> scratch_seeds_;
     std::vector<SeedAnchor> scratch_anchors_;
+    std::vector<CandidateCluster> scratch_clusters_;
     std::vector<CandidateInfo> scratch_candidates_;
     std::vector<PrefilterCandidate> scratch_prefiltered_;
     std::vector<int> scratch_banded_prev_;

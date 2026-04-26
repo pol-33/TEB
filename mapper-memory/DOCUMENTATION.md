@@ -349,6 +349,26 @@ modern machines. In our observed runs:
 - level `5` was around 13 hours on a MacBook Air M2,
 - and around 6 hours on MN5.
 
+We also collected an MN5 subset benchmark at level `5` with:
+
+- `bench_reads = 30000`,
+- `correctness_reads = 30000`,
+- `threads = 1`,
+- `k = 1`.
+
+That run showed:
+
+- index build time: `419.50 s`,
+- index build peak RSS: `5022359552` bytes,
+- mapper peak RSS: about `784 MB`,
+- projected full-file runtime:
+  - scalar: `53538.33 s`,
+  - AVX-512: `22082.67 s`.
+
+So the memory-focused default does achieve low mapping RSS, but its runtime remains large enough
+that subset-based projection is often more practical than waiting for full completion during
+interactive experimentation.
+
 So `L5` is the right default for memory-first benchmarking, not for throughput-first runs.
 
 ## 10. Exact and Inexact Search
@@ -517,6 +537,34 @@ output and identical correctness metrics against `bwa mem`.
 This is the same kind of lesson we already saw in `mapper-speed`: a wider SIMD backend can still
 lose overall if the surrounding workload becomes memory-bound, frequency-limited, or otherwise
 dominated by costs outside the vectorized inner loop.
+
+On the other hand, the observed MN5 subset benchmark at level `5` showed the opposite pattern.
+With:
+
+- `index_level = 5`,
+- `threads = 1`,
+- `bench_reads = 30000`,
+- `correctness_reads = 30000`,
+
+the results were:
+
+- scalar: `1606.15 s`,
+- AVX-512: `662.48 s`,
+- observed speedup ratio `off / avx512 = 2.4245`.
+
+In that run:
+
+- both variants mapped exactly the same number of reads,
+- both variants produced identical mapper output on the correctness subset,
+- both variants had identical correctness metrics against `bwa mem`,
+- AVX-512 reduced projected full-file runtime from `53538.33 s` to `22082.67 s`.
+
+So the most accurate conclusion is not “AVX-512 is good” or “AVX-512 is bad”, but rather:
+
+- at `L0`, AVX-512 was slower on the observed MN5 subset,
+- at `L5`, AVX-512 was much faster on the observed MN5 subset,
+- therefore the value of AVX-512 in this mapper depends strongly on how much time is being spent
+  in FM-index navigation versus the rest of the pipeline.
 
 ### 13.4 Self-test coverage
 

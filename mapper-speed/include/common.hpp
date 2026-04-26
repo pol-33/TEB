@@ -166,7 +166,11 @@ inline const SimdFeatures& detect_simd_features() {
         result.avx512vnni = __builtin_cpu_supports("avx512vnni");
         result.avx512bitalg = __builtin_cpu_supports("avx512bitalg");
         result.avx512vpopcntdq = __builtin_cpu_supports("avx512vpopcntdq");
+#if defined(__GNUC__) && !defined(__clang__) && (__GNUC__ >= 12)
         result.avx512fp16 = __builtin_cpu_supports("avx512fp16");
+#else
+        result.avx512fp16 = false;
+#endif
 
         if (result.popcnt && result.avx512f && result.avx512bw && result.avx512vl) {
             result.level = SimdLevel::kAvx512;
@@ -282,6 +286,32 @@ static inline uint32_t count_byte_mismatches_avx512(const char* lhs, const char*
         mismatches += 64u - static_cast<uint32_t>(__builtin_popcountll(mask));
     }
     return mismatches + count_byte_mismatches_swar(lhs + i, rhs + i, len - i);
+}
+
+__attribute__((target("avx512f,avx512vl,avx512vpopcntdq")))
+static inline uint32_t count_packed_mismatch_words_avx512(const uint64_t* lhs,
+                                                          const uint64_t* rhs,
+                                                          std::size_t word_count) {
+    constexpr uint64_t kLaneMaskValue = UINT64_C(0x5555555555555555);
+    const __m256i lane_mask = _mm256_set1_epi64x(static_cast<long long>(kLaneMaskValue));
+    uint32_t mismatches = 0;
+    std::size_t i = 0;
+    alignas(32) uint64_t counts[4];
+    for (; i + 4u <= word_count; i += 4u) {
+        const __m256i a = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(lhs + i));
+        const __m256i b = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(rhs + i));
+        const __m256i diff = _mm256_xor_si256(a, b);
+        const __m256i collapsed =
+            _mm256_and_si256(_mm256_or_si256(diff, _mm256_srli_epi64(diff, 1u)), lane_mask);
+        const __m256i pop = _mm256_popcnt_epi64(collapsed);
+        _mm256_store_si256(reinterpret_cast<__m256i*>(counts), pop);
+        mismatches += static_cast<uint32_t>(counts[0] + counts[1] + counts[2] + counts[3]);
+    }
+    for (; i < word_count; ++i) {
+        const uint64_t diff = lhs[i] ^ rhs[i];
+        mismatches += static_cast<uint32_t>(__builtin_popcountll((diff | (diff >> 1u)) & kLaneMaskValue));
+    }
+    return mismatches;
 }
 
 __attribute__((target("avx2,popcnt")))

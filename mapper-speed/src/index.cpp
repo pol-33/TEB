@@ -40,6 +40,27 @@ const auto& packed_byte_to_bases() {
     return table;
 }
 
+const auto& packed_word16_to_bases() {
+    static const std::array<uint64_t, 65536> table = []() {
+        std::array<uint64_t, 65536> values{};
+        for (uint32_t word = 0; word < 65536u; ++word) {
+            char chars[8] = {
+                kCodeToBase[word & 0x3u],
+                kCodeToBase[(word >> 2u) & 0x3u],
+                kCodeToBase[(word >> 4u) & 0x3u],
+                kCodeToBase[(word >> 6u) & 0x3u],
+                kCodeToBase[(word >> 8u) & 0x3u],
+                kCodeToBase[(word >> 10u) & 0x3u],
+                kCodeToBase[(word >> 12u) & 0x3u],
+                kCodeToBase[(word >> 14u) & 0x3u]
+            };
+            std::memcpy(&values[word], chars, sizeof(uint64_t));
+        }
+        return values;
+    }();
+    return table;
+}
+
 template <typename T>
 void write_value(std::ofstream& out, const T& value) {
     out.write(reinterpret_cast<const char*>(&value), sizeof(T));
@@ -386,11 +407,22 @@ void IndexView::extract_sequence(uint32_t global_pos, uint32_t length, std::stri
         dst[written] = kCodeToBase[packed_get(packed_reference_, pos)];
     }
 
-    const auto& decode = packed_byte_to_bases();
-    const uint32_t full_bytes = (length - written) >> 2u;
+    const auto& decode16 = packed_word16_to_bases();
+    const auto& decode8 = packed_byte_to_bases();
+    const uint32_t full_words16 = (length - written) >> 3u;
     std::size_t byte_index = pos >> 2u;
+    for (uint32_t i = 0; i < full_words16; ++i) {
+        uint16_t packed_bases16 = 0;
+        std::memcpy(&packed_bases16, packed_reference_ + byte_index + (i << 1u), sizeof(uint16_t));
+        std::memcpy(dst + written + (i << 3u), &decode16[packed_bases16], sizeof(uint64_t));
+    }
+    written += full_words16 << 3u;
+    pos += full_words16 << 3u;
+    byte_index += full_words16 << 1u;
+
+    const uint32_t full_bytes = (length - written) >> 2u;
     for (uint32_t i = 0; i < full_bytes; ++i) {
-        const uint32_t packed_chars = decode[packed_reference_[byte_index + i]];
+        const uint32_t packed_chars = decode8[packed_reference_[byte_index + i]];
         std::memcpy(dst + written + (i << 2u), &packed_chars, sizeof(uint32_t));
     }
     written += full_bytes << 2u;
@@ -464,6 +496,50 @@ uint32_t IndexView::count_mismatches_packed(uint32_t global_pos,
         }
         return (lo >> bit_shift) | (hi << (64u - bit_shift));
     };
+
+#if defined(__x86_64__) || defined(__i386__)
+    const SimdFeatures& features = detect_simd_features();
+    if (features.level == SimdLevel::kAvx512 && features.avx512vpopcntdq) {
+        for (; offset + 128u <= length; offset += 128u) {
+            uint64_t read_words[4];
+            uint64_t ref_words[4];
+            std::memcpy(read_words, packed_read + (offset >> 2u), sizeof(read_words));
+            ref_words[0] = load_ref_codes(global_pos + offset);
+            ref_words[1] = load_ref_codes(global_pos + offset + 32u);
+            ref_words[2] = load_ref_codes(global_pos + offset + 64u);
+            ref_words[3] = load_ref_codes(global_pos + offset + 96u);
+            const uint64_t n_word0 = load_ref_n_mask(global_pos + offset);
+            const uint64_t n_word1 = load_ref_n_mask(global_pos + offset + 64u);
+
+            if ((n_word0 | n_word1) == 0u) {
+                mismatches += count_packed_mismatch_words_avx512(read_words, ref_words, 4u);
+            } else {
+                for (uint32_t block = 0; block < 4u; ++block) {
+                    const uint64_t n_chunk = (block < 2u)
+                        ? (n_word0 >> (block * 32u))
+                        : (n_word1 >> ((block - 2u) * 32u));
+                    if ((n_chunk & 0xFFFFFFFFu) == 0u) {
+                        const uint64_t diff = read_words[block] ^ ref_words[block];
+                        mismatches += static_cast<uint32_t>(__builtin_popcountll((diff | (diff >> 1u)) & kLaneMask));
+                    } else {
+                        for (uint32_t i = 0; i < 32u; ++i) {
+                            if (((n_chunk >> i) & 1u) != 0u) {
+                                ++mismatches;
+                                continue;
+                            }
+                            const uint8_t ref_code = static_cast<uint8_t>((ref_words[block] >> (i * 2u)) & 0x3u);
+                            const uint8_t read_code = static_cast<uint8_t>((read_words[block] >> (i * 2u)) & 0x3u);
+                            mismatches += static_cast<uint32_t>(ref_code != read_code);
+                        }
+                    }
+                }
+            }
+            if (mismatches > limit) {
+                return mismatches;
+            }
+        }
+    }
+#endif
 
     for (; offset + 32u <= length; offset += 32u) {
         uint64_t read_chunk = 0;

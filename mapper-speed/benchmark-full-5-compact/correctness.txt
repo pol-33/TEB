@@ -1,0 +1,11 @@
+subset_reads=1000000
+mapper_mapped=804617
+bwa_mapped=843431
+shared_mapped=803866
+chrom_match=766491
+within_10bp=567100
+exact_pos=567098
+exact_cigar=766130
+exact_primary=567097
+mapper_only=751
+bwa_only=39565

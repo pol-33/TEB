@@ -1,0 +1,11 @@
+# started on Fri Apr 24 19:35:09 2026
+
+924.99;msec;task-clock:u;924985889;100.00;0.997;CPUs utilized
+2232271993;;cycles:u;925021864;100.00;2.413;GHz
+4688713186;;instructions:u;925021864;100.00;2.10;insn per cycle
+783896367;;branches:u;925021864;100.00;847.468;M/sec
+23793857;;branch-misses:u;925021864;100.00;3.04;of all branches
+10320188;;cache-references:u;925021864;100.00;11.157;M/sec
+7758152;;cache-misses:u;925021864;100.00;75.175;of all cache refs
+331404;;minor-faults:u;924985889;100.00;358.280;K/sec
+0;;major-faults:u;924985889;100.00;0.000;/sec

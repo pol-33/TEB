@@ -1,0 +1,336 @@
+#ifndef MAPPER_SPEED_COMMON_HPP
+#define MAPPER_SPEED_COMMON_HPP
+
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <cstdlib>
+#include <stdexcept>
+#include <string>
+#include <sys/resource.h>
+#include <unistd.h>
+
+#if defined(__x86_64__) || defined(__i386__)
+#include <immintrin.h>
+#endif
+
+namespace mapper_speed {
+
+constexpr uint32_t kSeedLength = 16;
+constexpr uint32_t kIndexVersion = 3;
+constexpr uint32_t kDenseIndexStride = 1;
+constexpr uint32_t kCompactIndexStride = 4;
+constexpr uint32_t kOffsetPageShift = 12;
+constexpr uint32_t kOffsetPageSize = 1u << kOffsetPageShift;
+constexpr uint64_t kOffsetEntryCount = (uint64_t{1} << (2 * kSeedLength)) + 1u;
+constexpr uint32_t kHighFreqSkip = 64;
+constexpr uint32_t kHighFreqAllowFallback = 512;
+constexpr uint32_t kMaxVerifyPerOrientation = 64;
+constexpr uint32_t kMaxReadForMyers = 128;
+
+inline uint64_t align_up(uint64_t value, uint64_t alignment) {
+    return (value + alignment - 1u) & ~(alignment - 1u);
+}
+
+inline uint64_t fnv1a_extend(uint64_t hash, const void* data, std::size_t len) {
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    for (std::size_t i = 0; i < len; ++i) {
+        hash ^= bytes[i];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+inline uint64_t fnv1a_init() {
+    return 1469598103934665603ULL;
+}
+
+enum class SimdLevel : uint8_t {
+    kGeneric = 0,
+    kAvx2 = 1,
+    kAvx512 = 2
+};
+
+struct SimdFeatures {
+    SimdLevel level = SimdLevel::kGeneric;
+    bool popcnt = false;
+    bool bmi2 = false;
+    bool avx2 = false;
+    bool avx512f = false;
+    bool avx512bw = false;
+    bool avx512vl = false;
+    bool avx512vbmi = false;
+    bool avx512vpopcntdq = false;
+};
+
+inline SimdFeatures apply_simd_cap_from_env(SimdFeatures features) {
+    const char* disable_avx512 = std::getenv("MAPPER_SPEED_DISABLE_AVX512");
+    if (disable_avx512 != nullptr && disable_avx512[0] != '\0' && disable_avx512[0] != '0') {
+        features.avx512f = false;
+        features.avx512bw = false;
+        features.avx512vl = false;
+        features.avx512vbmi = false;
+        features.avx512vpopcntdq = false;
+        if (features.level == SimdLevel::kAvx512) {
+            features.level = (features.popcnt && features.avx2) ? SimdLevel::kAvx2 : SimdLevel::kGeneric;
+        }
+        return features;
+    }
+
+    const char* max_simd = std::getenv("MAPPER_SPEED_MAX_SIMD");
+    if (max_simd == nullptr || max_simd[0] == '\0' ||
+        std::strcmp(max_simd, "native") == 0 || std::strcmp(max_simd, "auto") == 0 ||
+        std::strcmp(max_simd, "avx512") == 0) {
+        return features;
+    }
+
+    if (std::strcmp(max_simd, "avx2") == 0 || std::strcmp(max_simd, "noavx512") == 0) {
+        features.avx512f = false;
+        features.avx512bw = false;
+        features.avx512vl = false;
+        features.avx512vbmi = false;
+        features.avx512vpopcntdq = false;
+        if (features.level == SimdLevel::kAvx512) {
+            features.level = (features.popcnt && features.avx2) ? SimdLevel::kAvx2 : SimdLevel::kGeneric;
+        }
+        return features;
+    }
+
+    if (std::strcmp(max_simd, "generic") == 0 || std::strcmp(max_simd, "none") == 0) {
+        features.level = SimdLevel::kGeneric;
+        features.avx2 = false;
+        features.avx512f = false;
+        features.avx512bw = false;
+        features.avx512vl = false;
+        features.avx512vbmi = false;
+        features.avx512vpopcntdq = false;
+        return features;
+    }
+
+    return features;
+}
+
+inline const SimdFeatures& detect_simd_features() {
+#if defined(__x86_64__) || defined(__i386__)
+    static const SimdFeatures features = []() {
+        SimdFeatures result;
+        result.popcnt = __builtin_cpu_supports("popcnt");
+        result.bmi2 = __builtin_cpu_supports("bmi2");
+        result.avx2 = __builtin_cpu_supports("avx2");
+        result.avx512f = __builtin_cpu_supports("avx512f");
+        result.avx512bw = __builtin_cpu_supports("avx512bw");
+        result.avx512vl = __builtin_cpu_supports("avx512vl");
+        result.avx512vbmi = __builtin_cpu_supports("avx512vbmi");
+        result.avx512vpopcntdq = __builtin_cpu_supports("avx512vpopcntdq");
+
+        if (result.popcnt && result.avx512f && result.avx512bw && result.avx512vl) {
+            result.level = SimdLevel::kAvx512;
+        } else if (result.popcnt && result.avx2) {
+            result.level = SimdLevel::kAvx2;
+        } else {
+            result.level = SimdLevel::kGeneric;
+        }
+        return apply_simd_cap_from_env(result);
+    }();
+    return features;
+#else
+    static const SimdFeatures features{};
+    return features;
+#endif
+}
+
+inline SimdLevel detect_simd_level() {
+    return detect_simd_features().level;
+}
+
+inline const char* active_simd_name() {
+    const SimdFeatures& features = detect_simd_features();
+    switch (features.level) {
+        case SimdLevel::kAvx512:
+            if (features.avx512vbmi && features.avx512vpopcntdq) {
+                return "avx512+vbmi+vpopcntdq";
+            }
+            if (features.avx512vpopcntdq) {
+                return "avx512+vpopcntdq";
+            }
+            if (features.avx512vbmi) {
+                return "avx512+vbmi";
+            }
+            return "avx512";
+        case SimdLevel::kAvx2:
+            return features.bmi2 ? "avx2+bmi2" : "avx2";
+        default:
+            return "generic";
+    }
+}
+
+// Bulk byte mismatch counter using 64-bit SWAR.
+// For each 8-byte chunk, XOR reveals differing bytes; zero-byte detection then
+// counts equal bytes without branching, and popcount turns that into totals.
+inline uint32_t count_byte_mismatches_swar(const char* lhs, const char* rhs, std::size_t len) {
+    constexpr uint64_t kOnes = UINT64_C(0x0101010101010101);
+    constexpr uint64_t kHighs = UINT64_C(0x8080808080808080);
+
+    uint32_t mismatches = 0;
+    std::size_t i = 0;
+    for (; i + 8u <= len; i += 8u) {
+        uint64_t a = 0;
+        uint64_t b = 0;
+        std::memcpy(&a, lhs + i, sizeof(uint64_t));
+        std::memcpy(&b, rhs + i, sizeof(uint64_t));
+        const uint64_t x = a ^ b;
+        const uint64_t zero_high_bits = (x - kOnes) & ~x & kHighs;
+        const uint32_t equal_bytes = static_cast<uint32_t>(__builtin_popcountll(zero_high_bits));
+        mismatches += 8u - equal_bytes;
+    }
+    for (; i < len; ++i) {
+        mismatches += static_cast<uint32_t>(lhs[i] != rhs[i]);
+    }
+    return mismatches;
+}
+
+#if defined(__x86_64__) || defined(__i386__)
+__attribute__((target("avx2,popcnt")))
+static inline uint32_t count_byte_mismatches_avx2(const char* lhs, const char* rhs, std::size_t len) {
+    uint32_t mismatches = 0;
+    std::size_t i = 0;
+    for (; i + 32u <= len; i += 32u) {
+        const __m256i a = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(lhs + i));
+        const __m256i b = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(rhs + i));
+        const __m256i eq = _mm256_cmpeq_epi8(a, b);
+        const uint32_t mask = static_cast<uint32_t>(_mm256_movemask_epi8(eq));
+        mismatches += 32u - static_cast<uint32_t>(__builtin_popcount(mask));
+    }
+    return mismatches + count_byte_mismatches_swar(lhs + i, rhs + i, len - i);
+}
+
+__attribute__((target("avx512f,avx512bw,avx512vl,popcnt")))
+static inline uint32_t count_byte_mismatches_avx512(const char* lhs, const char* rhs, std::size_t len) {
+    uint32_t mismatches = 0;
+    std::size_t i = 0;
+    for (; i + 64u <= len; i += 64u) {
+        const __m512i a = _mm512_loadu_si512(reinterpret_cast<const void*>(lhs + i));
+        const __m512i b = _mm512_loadu_si512(reinterpret_cast<const void*>(rhs + i));
+        const uint64_t mask = _mm512_cmpeq_epi8_mask(a, b);
+        mismatches += 64u - static_cast<uint32_t>(__builtin_popcountll(mask));
+    }
+    return mismatches + count_byte_mismatches_swar(lhs + i, rhs + i, len - i);
+}
+
+__attribute__((target("avx2,popcnt")))
+static inline uint32_t count_gc_bases_avx2(const char* data, std::size_t len) {
+    uint32_t gc = 0;
+    std::size_t i = 0;
+    const __m256i g = _mm256_set1_epi8('G');
+    const __m256i c = _mm256_set1_epi8('C');
+    for (; i + 32u <= len; i += 32u) {
+        const __m256i x = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(data + i));
+        const __m256i is_g = _mm256_cmpeq_epi8(x, g);
+        const __m256i is_c = _mm256_cmpeq_epi8(x, c);
+        const uint32_t mask =
+            static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_or_si256(is_g, is_c)));
+        gc += static_cast<uint32_t>(__builtin_popcount(mask));
+    }
+    return gc;
+}
+
+__attribute__((target("avx512f,avx512bw,avx512vl,popcnt")))
+static inline uint32_t count_gc_bases_avx512(const char* data, std::size_t len) {
+    uint32_t gc = 0;
+    std::size_t i = 0;
+    const __m512i g = _mm512_set1_epi8('G');
+    const __m512i c = _mm512_set1_epi8('C');
+    for (; i + 64u <= len; i += 64u) {
+        const __m512i x = _mm512_loadu_si512(reinterpret_cast<const void*>(data + i));
+        const uint64_t mask_g = _mm512_cmpeq_epi8_mask(x, g);
+        const uint64_t mask_c = _mm512_cmpeq_epi8_mask(x, c);
+        gc += static_cast<uint32_t>(__builtin_popcountll(mask_g | mask_c));
+    }
+    return gc;
+}
+#endif
+
+inline uint32_t count_byte_mismatches_bulk(const char* lhs, const char* rhs, std::size_t len) {
+    switch (detect_simd_level()) {
+#if defined(__x86_64__) || defined(__i386__)
+        case SimdLevel::kAvx512:
+            return count_byte_mismatches_avx512(lhs, rhs, len);
+        case SimdLevel::kAvx2:
+            return count_byte_mismatches_avx2(lhs, rhs, len);
+#endif
+        default:
+            return count_byte_mismatches_swar(lhs, rhs, len);
+    }
+}
+
+inline uint32_t count_gc_bases_swar(const char* data, std::size_t len) {
+    constexpr uint64_t kBit0 = UINT64_C(0x0101010101010101);
+    uint32_t gc = 0;
+    std::size_t i = 0;
+    for (; i + 8u <= len; i += 8u) {
+        uint64_t chunk = 0;
+        std::memcpy(&chunk, data + i, sizeof(uint64_t));
+        const uint64_t lo = chunk & kBit0;
+        const uint64_t hi = (chunk >> 1u) & kBit0;
+        gc += static_cast<uint32_t>(__builtin_popcountll(lo & hi));
+    }
+    for (; i < len; ++i) {
+        gc += static_cast<uint32_t>((static_cast<uint8_t>(data[i]) & 0x3u) == 0x3u);
+    }
+    return gc;
+}
+
+// Bulk GC counter: processes 8 bases per CPU cycle using 64-bit word tricks.
+// For each byte, G(0x47) and C(0x43) have bits[1:0]==0b11; A, T, N do not.
+// Strategy: extract bit0 and bit1 of every byte independently, AND them,
+// then popcount — each byte with both bits set contributes exactly 1.
+inline uint32_t count_gc_bases_bulk(const char* data, std::size_t len) {
+#if defined(__x86_64__) || defined(__i386__)
+    if (detect_simd_level() == SimdLevel::kAvx512) {
+        const std::size_t simd_len = len & ~std::size_t{63};
+        return count_gc_bases_avx512(data, simd_len) + count_gc_bases_swar(data + simd_len, len - simd_len);
+    }
+    if (detect_simd_level() == SimdLevel::kAvx2) {
+        const std::size_t simd_len = len & ~std::size_t{31};
+        return count_gc_bases_avx2(data, simd_len) + count_gc_bases_swar(data + simd_len, len - simd_len);
+    }
+#endif
+    return count_gc_bases_swar(data, len);
+}
+
+inline double bytes_to_mebibytes(uint64_t bytes) {
+    return static_cast<double>(bytes) / (1024.0 * 1024.0);
+}
+
+inline uint64_t peak_rss_bytes() {
+    struct rusage usage {};
+    if (getrusage(RUSAGE_SELF, &usage) != 0) {
+        return 0;
+    }
+#if defined(__APPLE__)
+    return static_cast<uint64_t>(usage.ru_maxrss);
+#else
+    return static_cast<uint64_t>(usage.ru_maxrss) * 1024ULL;
+#endif
+}
+
+inline uint64_t physical_memory_bytes() {
+#if defined(_SC_PHYS_PAGES) && defined(_SC_PAGE_SIZE)
+    const long pages = sysconf(_SC_PHYS_PAGES);
+    const long page_size = sysconf(_SC_PAGE_SIZE);
+    if (pages > 0 && page_size > 0) {
+        return static_cast<uint64_t>(pages) * static_cast<uint64_t>(page_size);
+    }
+#endif
+    return 0;
+}
+
+inline void throw_if(bool condition, const std::string& message) {
+    if (condition) {
+        throw std::runtime_error(message);
+    }
+}
+
+}  // namespace mapper_speed
+
+#endif

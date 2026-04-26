@@ -1,0 +1,11 @@
+| Event | Value | Unit |
+| --- | --- | --- |
+| task-clock:u | 924.99 | msec |
+| cycles:u | 2232271993 | - |
+| instructions:u | 4688713186 | - |
+| branches:u | 783896367 | - |
+| branch-misses:u | 23793857 | - |
+| cache-references:u | 10320188 | - |
+| cache-misses:u | 7758152 | - |
+| minor-faults:u | 331404 | - |
+| major-faults:u | 0 | - |

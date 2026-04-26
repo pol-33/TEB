@@ -1,0 +1,7 @@
+[mapper] loaded index with 194 chromosomes, 737152434 indexed seeds
+[mapper] single-thread verifier dispatch ready (simd=avx2+bmi2)
+[mapper] cpu dispatch features ready (popcnt=1, bmi2=1, avx2=1, avx512f=0, avx512bw=0, avx512vl=0, avx512vbmi=0, avx512vpopcntdq=0)
+[mapper] processed 5000 reads total
+[mapper] peak RSS: 1299.44 MiB
+[ perf record: Woken up 1 times to write data ]
+[ perf record: Captured and wrote 0.071 MB ./profile-results-compact/perf-record/perf.data (912 samples) ]

@@ -190,6 +190,22 @@ parse_active_simd() {
   ' "$stderr_path"
 }
 
+parse_verifier_kernel() {
+  local stderr_path="$1"
+  awk '
+    /verifier kernel selected/ {
+      line = $0;
+      sub(/^.*\(kernel=/, "", line);
+      sub(/\).*$/, "", line);
+      kernel = line;
+    }
+    END {
+      if (kernel == "") kernel = "unknown";
+      print kernel;
+    }
+  ' "$stderr_path"
+}
+
 absolute_path() {
   local path="$1"
   if [[ "$path" = /* ]]; then
@@ -484,6 +500,7 @@ CASE_INDEX_KIND=()
 CASE_SIMD_LABEL=()
 CASE_SIMD_REQUEST=()
 CASE_SIMD_EFFECTIVE=()
+CASE_VERIFIER_KERNEL=()
 CASE_REAL=()
 CASE_USER=()
 CASE_SYS=()
@@ -531,12 +548,15 @@ load_case_results() {
   source "$case_dir/mapper.stats"
   local effective_simd
   effective_simd="$(parse_active_simd "$stderr_path")"
+  local verifier_kernel
+  verifier_kernel="$(parse_verifier_kernel "$stderr_path")"
 
   CASE_IDS+=("$case_id")
   CASE_INDEX_KIND+=("$index_kind")
   CASE_SIMD_LABEL+=("$simd_label")
   CASE_SIMD_REQUEST+=("$simd_request")
   CASE_SIMD_EFFECTIVE+=("$effective_simd")
+  CASE_VERIFIER_KERNEL+=("$verifier_kernel")
   CASE_REAL+=("$real_seconds")
   CASE_USER+=("$user_seconds")
   CASE_SYS+=("$sys_seconds")
@@ -552,6 +572,7 @@ load_case_results() {
     echo "simd_label=$simd_label"
     echo "simd_request=$simd_request"
     echo "effective_simd=$effective_simd"
+    echo "verifier_kernel=$verifier_kernel"
     echo "real_seconds=$real_seconds"
     echo "user_seconds=$user_seconds"
     echo "sys_seconds=$sys_seconds"
@@ -688,18 +709,19 @@ fi
 
 RUNS_TSV="$OUT_DIR/runs.tsv"
 {
-  printf "case_id\tindex_kind\tsimd_label\tsimd_request\teffective_simd\treal_seconds\tuser_seconds\tsys_seconds\tpeak_rss_bytes\tmapped\tunmapped\twith_alt\tcase_dir\n"
+  printf "case_id\tindex_kind\tsimd_label\tsimd_request\teffective_simd\tverifier_kernel\treal_seconds\tuser_seconds\tsys_seconds\tpeak_rss_bytes\tmapped\tunmapped\twith_alt\tcase_dir\n"
   for i in "${!CASE_IDS[@]}"; do
-    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
       "${CASE_IDS[$i]}" "${CASE_INDEX_KIND[$i]}" "${CASE_SIMD_LABEL[$i]}" \
       "${CASE_SIMD_REQUEST[$i]}" "${CASE_SIMD_EFFECTIVE[$i]}" \
+      "${CASE_VERIFIER_KERNEL[$i]}" \
       "${CASE_REAL[$i]}" "${CASE_USER[$i]}" "${CASE_SYS[$i]}" \
       "${CASE_RSS[$i]}" "${CASE_MAPPED[$i]}" "${CASE_UNMAPPED[$i]}" \
       "${CASE_WITH_ALT[$i]}" "${CASE_DIRS[$i]}"
   done
   if [[ "$BWA_AVAILABLE" == "1" ]]; then
-    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
-      "bwa-mem" "baseline" "baseline" "bwa-mem" "bwa-mem" \
+    printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n" \
+      "bwa-mem" "baseline" "baseline" "bwa-mem" "bwa-mem" "bwa-mem" \
       "$bwa_real_seconds" "$bwa_user_seconds" "$bwa_sys_seconds" \
       "$bwa_peak_rss_bytes" "$bwa_mapped" "$bwa_unmapped" \
       "$bwa_with_alt" "$OUT_DIR"
@@ -765,17 +787,17 @@ SUMMARY_TXT="$OUT_DIR/summary.txt"
   echo
   echo "Runs"
   echo "----"
-  printf "%-20s %-8s %-12s %-20s %12s %16s %10s %10s %10s\n" \
-    "case" "index" "simd" "effective" "real_s" "peak_rss_bytes" "mapped" "unmapped" "with_alt"
+  printf "%-20s %-8s %-12s %-20s %-16s %12s %16s %10s %10s %10s\n" \
+    "case" "index" "simd" "effective" "verifier" "real_s" "peak_rss_bytes" "mapped" "unmapped" "with_alt"
   for i in "${!CASE_IDS[@]}"; do
-    printf "%-20s %-8s %-12s %-20s %12s %16s %10s %10s %10s\n" \
+    printf "%-20s %-8s %-12s %-20s %-16s %12s %16s %10s %10s %10s\n" \
       "${CASE_IDS[$i]}" "${CASE_INDEX_KIND[$i]}" "${CASE_SIMD_LABEL[$i]}" \
-      "${CASE_SIMD_EFFECTIVE[$i]}" "${CASE_REAL[$i]}" "${CASE_RSS[$i]}" \
+      "${CASE_SIMD_EFFECTIVE[$i]}" "${CASE_VERIFIER_KERNEL[$i]}" "${CASE_REAL[$i]}" "${CASE_RSS[$i]}" \
       "${CASE_MAPPED[$i]}" "${CASE_UNMAPPED[$i]}" "${CASE_WITH_ALT[$i]}"
   done
   if [[ "$BWA_AVAILABLE" == "1" ]]; then
-    printf "%-20s %-8s %-12s %-20s %12s %16s %10s %10s %10s\n" \
-      "bwa-mem" "bwa" "baseline" "bwa-mem" "$bwa_real_seconds" \
+    printf "%-20s %-8s %-12s %-20s %-16s %12s %16s %10s %10s %10s\n" \
+      "bwa-mem" "bwa" "baseline" "bwa-mem" "bwa-mem" "$bwa_real_seconds" \
       "$bwa_peak_rss_bytes" "$bwa_mapped" "$bwa_unmapped" "$bwa_with_alt"
   fi
   echo

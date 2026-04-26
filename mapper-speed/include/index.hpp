@@ -104,6 +104,7 @@ public:
                                      const uint8_t* packed_read,
                                      uint32_t length,
                                      uint32_t limit) const;
+    void prefetch_reference_window(uint32_t global_pos, uint32_t length) const;
     std::size_t chromosome_for_position(uint32_t global_pos) const;
     bool stays_within_chromosome(uint32_t global_pos, uint32_t ref_length) const;
 

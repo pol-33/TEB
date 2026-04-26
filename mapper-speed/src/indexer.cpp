@@ -20,7 +20,7 @@ namespace {
 struct Config {
     std::string reference_path;
     std::string index_path;
-    std::string mode = "auto";
+    std::string mode = "compact";
     std::optional<unsigned> bucket_bits;
     uint64_t max_bucket_bytes = 0;
 };
@@ -30,7 +30,7 @@ constexpr std::size_t kDensePageThreshold =
 
 void usage() {
     std::cerr << "Usage: indexer -R genome.fa -I genome.idx"
-                 " [--mode auto|dense|compact] [--bucket-bits N] [--max-bucket-mib N]\n";
+                 " [--mode compact|dense|auto] [--bucket-bits N] [--max-bucket-mib N]\n";
 }
 
 Config parse_args(int argc, char* argv[]) {

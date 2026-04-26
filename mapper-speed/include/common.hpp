@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdlib>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <sys/resource.h>
@@ -55,22 +56,37 @@ struct SimdFeatures {
     SimdLevel level = SimdLevel::kGeneric;
     bool popcnt = false;
     bool bmi2 = false;
+    bool avx = false;
     bool avx2 = false;
     bool avx512f = false;
+    bool avx512dq = false;
+    bool avx512ifma = false;
+    bool avx512cd = false;
     bool avx512bw = false;
     bool avx512vl = false;
     bool avx512vbmi = false;
+    bool avx512vbmi2 = false;
+    bool avx512vnni = false;
+    bool avx512bitalg = false;
     bool avx512vpopcntdq = false;
+    bool avx512fp16 = false;
 };
 
 inline SimdFeatures apply_simd_cap_from_env(SimdFeatures features) {
     const char* disable_avx512 = std::getenv("MAPPER_SPEED_DISABLE_AVX512");
     if (disable_avx512 != nullptr && disable_avx512[0] != '\0' && disable_avx512[0] != '0') {
         features.avx512f = false;
+        features.avx512dq = false;
+        features.avx512ifma = false;
+        features.avx512cd = false;
         features.avx512bw = false;
         features.avx512vl = false;
         features.avx512vbmi = false;
+        features.avx512vbmi2 = false;
+        features.avx512vnni = false;
+        features.avx512bitalg = false;
         features.avx512vpopcntdq = false;
+        features.avx512fp16 = false;
         if (features.level == SimdLevel::kAvx512) {
             features.level = (features.popcnt && features.avx2) ? SimdLevel::kAvx2 : SimdLevel::kGeneric;
         }
@@ -86,10 +102,17 @@ inline SimdFeatures apply_simd_cap_from_env(SimdFeatures features) {
 
     if (std::strcmp(max_simd, "avx2") == 0 || std::strcmp(max_simd, "noavx512") == 0) {
         features.avx512f = false;
+        features.avx512dq = false;
+        features.avx512ifma = false;
+        features.avx512cd = false;
         features.avx512bw = false;
         features.avx512vl = false;
         features.avx512vbmi = false;
+        features.avx512vbmi2 = false;
+        features.avx512vnni = false;
+        features.avx512bitalg = false;
         features.avx512vpopcntdq = false;
+        features.avx512fp16 = false;
         if (features.level == SimdLevel::kAvx512) {
             features.level = (features.popcnt && features.avx2) ? SimdLevel::kAvx2 : SimdLevel::kGeneric;
         }
@@ -98,13 +121,27 @@ inline SimdFeatures apply_simd_cap_from_env(SimdFeatures features) {
 
     if (std::strcmp(max_simd, "generic") == 0 || std::strcmp(max_simd, "none") == 0) {
         features.level = SimdLevel::kGeneric;
+        features.avx = false;
         features.avx2 = false;
         features.avx512f = false;
+        features.avx512dq = false;
+        features.avx512ifma = false;
+        features.avx512cd = false;
         features.avx512bw = false;
         features.avx512vl = false;
         features.avx512vbmi = false;
+        features.avx512vbmi2 = false;
+        features.avx512vnni = false;
+        features.avx512bitalg = false;
         features.avx512vpopcntdq = false;
+        features.avx512fp16 = false;
         return features;
+    }
+
+    const char* prefer_avx512 = std::getenv("MAPPER_SPEED_PREFER_AVX512");
+    if (prefer_avx512 != nullptr && prefer_avx512[0] != '\0' && prefer_avx512[0] != '0' &&
+        features.avx512f && features.avx512bw && features.avx512vl) {
+        features.level = SimdLevel::kAvx512;
     }
 
     return features;
@@ -116,12 +153,24 @@ inline const SimdFeatures& detect_simd_features() {
         SimdFeatures result;
         result.popcnt = __builtin_cpu_supports("popcnt");
         result.bmi2 = __builtin_cpu_supports("bmi2");
+        result.avx = __builtin_cpu_supports("avx");
         result.avx2 = __builtin_cpu_supports("avx2");
         result.avx512f = __builtin_cpu_supports("avx512f");
+        result.avx512dq = __builtin_cpu_supports("avx512dq");
+        result.avx512ifma = __builtin_cpu_supports("avx512ifma");
+        result.avx512cd = __builtin_cpu_supports("avx512cd");
         result.avx512bw = __builtin_cpu_supports("avx512bw");
         result.avx512vl = __builtin_cpu_supports("avx512vl");
         result.avx512vbmi = __builtin_cpu_supports("avx512vbmi");
+        result.avx512vbmi2 = __builtin_cpu_supports("avx512vbmi2");
+        result.avx512vnni = __builtin_cpu_supports("avx512vnni");
+        result.avx512bitalg = __builtin_cpu_supports("avx512bitalg");
         result.avx512vpopcntdq = __builtin_cpu_supports("avx512vpopcntdq");
+#if defined(__GNUC__) && !defined(__clang__) && (__GNUC__ >= 12)
+        result.avx512fp16 = __builtin_cpu_supports("avx512fp16");
+#else
+        result.avx512fp16 = false;
+#endif
 
         if (result.popcnt && result.avx512f && result.avx512bw && result.avx512vl) {
             result.level = SimdLevel::kAvx512;
@@ -141,6 +190,28 @@ inline const SimdFeatures& detect_simd_features() {
 
 inline SimdLevel detect_simd_level() {
     return detect_simd_features().level;
+}
+
+inline std::string simd_features_summary() {
+    const SimdFeatures& f = detect_simd_features();
+    std::ostringstream out;
+    out << "popcnt=" << f.popcnt
+        << ", bmi2=" << f.bmi2
+        << ", avx=" << f.avx
+        << ", avx2=" << f.avx2
+        << ", avx512f=" << f.avx512f
+        << ", avx512dq=" << f.avx512dq
+        << ", avx512ifma=" << f.avx512ifma
+        << ", avx512cd=" << f.avx512cd
+        << ", avx512bw=" << f.avx512bw
+        << ", avx512vl=" << f.avx512vl
+        << ", avx512vbmi=" << f.avx512vbmi
+        << ", avx512vbmi2=" << f.avx512vbmi2
+        << ", avx512vnni=" << f.avx512vnni
+        << ", avx512bitalg=" << f.avx512bitalg
+        << ", avx512vpopcntdq=" << f.avx512vpopcntdq
+        << ", avx512fp16=" << f.avx512fp16;
+    return out.str();
 }
 
 inline const char* active_simd_name() {
@@ -215,6 +286,32 @@ static inline uint32_t count_byte_mismatches_avx512(const char* lhs, const char*
         mismatches += 64u - static_cast<uint32_t>(__builtin_popcountll(mask));
     }
     return mismatches + count_byte_mismatches_swar(lhs + i, rhs + i, len - i);
+}
+
+__attribute__((target("avx512f,avx512vl,avx512vpopcntdq")))
+static inline uint32_t count_packed_mismatch_words_avx512(const uint64_t* lhs,
+                                                          const uint64_t* rhs,
+                                                          std::size_t word_count) {
+    constexpr uint64_t kLaneMaskValue = UINT64_C(0x5555555555555555);
+    const __m256i lane_mask = _mm256_set1_epi64x(static_cast<long long>(kLaneMaskValue));
+    uint32_t mismatches = 0;
+    std::size_t i = 0;
+    alignas(32) uint64_t counts[4];
+    for (; i + 4u <= word_count; i += 4u) {
+        const __m256i a = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(lhs + i));
+        const __m256i b = _mm256_loadu_si256(reinterpret_cast<const __m256i*>(rhs + i));
+        const __m256i diff = _mm256_xor_si256(a, b);
+        const __m256i collapsed =
+            _mm256_and_si256(_mm256_or_si256(diff, _mm256_srli_epi64(diff, 1u)), lane_mask);
+        const __m256i pop = _mm256_popcnt_epi64(collapsed);
+        _mm256_store_si256(reinterpret_cast<__m256i*>(counts), pop);
+        mismatches += static_cast<uint32_t>(counts[0] + counts[1] + counts[2] + counts[3]);
+    }
+    for (; i < word_count; ++i) {
+        const uint64_t diff = lhs[i] ^ rhs[i];
+        mismatches += static_cast<uint32_t>(__builtin_popcountll((diff | (diff >> 1u)) & kLaneMaskValue));
+    }
+    return mismatches;
 }
 
 __attribute__((target("avx2,popcnt")))
@@ -323,6 +420,14 @@ inline uint64_t physical_memory_bytes() {
     }
 #endif
     return 0;
+}
+
+inline void prefetch_read_mostly(const void* ptr) {
+#if defined(__GNUC__) || defined(__clang__)
+    __builtin_prefetch(ptr, 0, 1);
+#else
+    (void)ptr;
+#endif
 }
 
 inline void throw_if(bool condition, const std::string& message) {

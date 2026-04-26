@@ -64,16 +64,10 @@ int main(int argc, char* argv[]) {
                   << index.positions_count() << " indexed seeds\n";
         std::cerr << "[mapper] single-thread verifier dispatch ready"
                   << " (simd=" << mapper_speed::active_simd_name() << ")\n";
+        std::cerr << "[mapper] verifier kernel selected"
+                  << " (kernel=" << engine.verifier_kernel_name() << ")\n";
         std::cerr << "[mapper] cpu dispatch features ready"
-                  << " (popcnt=" << mapper_speed::detect_simd_features().popcnt
-                  << ", bmi2=" << mapper_speed::detect_simd_features().bmi2
-                  << ", avx2=" << mapper_speed::detect_simd_features().avx2
-                  << ", avx512f=" << mapper_speed::detect_simd_features().avx512f
-                  << ", avx512bw=" << mapper_speed::detect_simd_features().avx512bw
-                  << ", avx512vl=" << mapper_speed::detect_simd_features().avx512vl
-                  << ", avx512vbmi=" << mapper_speed::detect_simd_features().avx512vbmi
-                  << ", avx512vpopcntdq=" << mapper_speed::detect_simd_features().avx512vpopcntdq
-                  << ")\n";
+                  << " (" << mapper_speed::simd_features_summary() << ")\n";
 
         mapper_speed::FastqRecord record;
         uint64_t processed = 0;

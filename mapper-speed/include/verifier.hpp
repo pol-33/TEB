@@ -14,6 +14,7 @@ struct MyersQuery {
     uint64_t masks_hi[4]{};
     uint64_t last_bit0 = 0;
     uint64_t last_bit1 = 0;
+    char read_bases[128]{};
 };
 
 struct MyersDispatch {

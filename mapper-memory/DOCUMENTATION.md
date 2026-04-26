@@ -79,8 +79,17 @@ So the default memory-contest workflow is:
 ./mapper -I genome.fmidx -i reads.fastq -o output.sam -k 1 -R genome.fa
 ```
 
-If the goal is not minimum memory but rather a speed-oriented baseline, level `0` remains
-available:
+The important warning is that this default can be very slow on a full 1M-read benchmark.
+In our observed runs, the expected single-thread execution time was on the order of:
+
+- about 13 hours on a MacBook Air M2,
+- about 6 hours on MareNostrum 5.
+
+So level `5` is the right default for the memory contest, but users should expect a very large
+runtime penalty.
+
+If you want a less aggressively memory-optimized version of the same FM-index mapper, level `0`
+remains available:
 
 ```bash
 ./indexer -R genome.fa -I genome.fmidx -L 0
@@ -334,6 +343,12 @@ show that this tradeoff is real:
 - the max-level configuration dropped to roughly `0.78 GiB`,
 - but runtime also became dramatically slower.
 
+For full single-thread end-to-end mapping, the practical expectation can be very high even on
+modern machines. In our observed runs:
+
+- level `5` was around 13 hours on a MacBook Air M2,
+- and around 6 hours on MN5.
+
 So `L5` is the right default for memory-first benchmarking, not for throughput-first runs.
 
 ## 10. Exact and Inexact Search
@@ -482,6 +497,27 @@ This backend is selected only if:
 - the host supports the relevant ISA and XCR0 state,
 - `MAPPER_SIMD` resolves to `auto` or `avx512`.
 
+However, this does **not** mean AVX-512 is guaranteed to help.
+
+On the observed MN5 subset benchmark with:
+
+- `index_level = 0`,
+- `threads = 1`,
+- `bench_reads = 50000`,
+
+the results were:
+
+- scalar: `690.52 s`,
+- AVX-512: `828.90 s`,
+- observed speedup ratio `off / avx512 = 0.8331`.
+
+So AVX-512 was actually slower on that run, even though both variants produced identical mapper
+output and identical correctness metrics against `bwa mem`.
+
+This is the same kind of lesson we already saw in `mapper-speed`: a wider SIMD backend can still
+lose overall if the surrounding workload becomes memory-bound, frequency-limited, or otherwise
+dominated by costs outside the vectorized inner loop.
+
 ### 13.4 Self-test coverage
 
 `simd_selftest.cpp` checks:
@@ -539,6 +575,10 @@ This MN5-oriented helper runs:
 
 It is intended for practical experimentation on MN5 where full single-thread runs can exceed the
 available wall-clock budget.
+
+In particular, this script is useful because the full memory-optimized run can easily be too slow
+for short debug or interactive allocations, so projecting from a subset is often more realistic
+than waiting for a full default `L5` run.
 
 ### 14.4 Progress monitoring helpers
 
@@ -601,15 +641,19 @@ measured summaries for the baseline and maximum-memory-optimization configuratio
 For normal use:
 
 - if you care most about memory, use the default `L5` behavior,
-- if you care most about speed, explicitly use `-L 0`,
+- if you want a less extreme memory/speed tradeoff inside this same mapper, explicitly use `-L 0`,
 - if you benchmark automatically after building an index, remember that `L5` requires `-R`.
+- do not confuse `-L 0` with `mapper-speed`: it is only the least memory-optimized mode of
+  `mapper-memory`, and it is still much slower than the dedicated speed mapper.
 
 For SIMD evaluation:
 
 - compare `MAPPER_SIMD=off` and `MAPPER_SIMD=avx512` on the same subset,
 - keep thread count fixed,
 - do not assume AVX-512 helps equally across all levels,
-- expect the effect to be larger when FM navigation dominates runtime.
+- expect the effect to be larger when FM navigation dominates runtime,
+- but also be prepared for AVX-512 to lose: on the observed MN5 subset benchmark it was slower
+  than scalar despite identical outputs.
 
 For correctness:
 

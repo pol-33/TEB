@@ -121,9 +121,9 @@ test: all simd_selftest
 	MAPPER_SIMD=off ./simd_selftest
 	MAPPER_SIMD=auto ./simd_selftest
 	./indexer -R test/tiny_genome.fa -I test/tiny.idx
-	MAPPER_SIMD=off ./mapper -I test/tiny.idx -i test/tiny_reads.fastq -o test/out.scalar.sam -k 1
+	MAPPER_SIMD=off ./mapper -I test/tiny.idx -i test/tiny_reads.fastq -o test/out.scalar.sam -k 1 -R test/tiny_genome.fa
 	cmp -s test/out.scalar.sam test/out_L1.sam
-	MAPPER_SIMD=auto ./mapper -I test/tiny.idx -i test/tiny_reads.fastq -o test/out.auto.sam -k 1
+	MAPPER_SIMD=auto ./mapper -I test/tiny.idx -i test/tiny_reads.fastq -o test/out.auto.sam -k 1 -R test/tiny_genome.fa
 	cmp -s test/out.auto.sam test/out_L1.sam
 
 clean:

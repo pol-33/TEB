@@ -15,11 +15,13 @@ namespace {
 struct Config {
     std::string reference_path;
     std::string index_path;
-    int opt_level = 0;  // Optimization level 0-5
+    int opt_level = 5;  // Optimization level 0-5
 };
 
 void print_usage() {
     std::cerr << "Usage: indexer -R genome.fa -I genome.idx [-L level]\n"
+              << "\n"
+              << "Default level: 5 (maximum index-size / RAM optimization)\n"
               << "\n"
               << "Optimization levels:\n"
               << "  0 (baseline): occ=256, sa=32, genome=yes  (largest, fastest)\n"
@@ -66,7 +68,7 @@ mapper_memory::IndexConfig get_index_config(int level) {
         case 3: return mapper_memory::IndexConfig::level3_very_sparse();
         case 4: return mapper_memory::IndexConfig::level4_ultra_sparse();
         case 5: return mapper_memory::IndexConfig::level5_extreme();
-        default: return mapper_memory::IndexConfig::baseline();
+        default: return mapper_memory::IndexConfig::level5_extreme();
     }
 }
 

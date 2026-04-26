@@ -15,7 +15,7 @@ CORRECTNESS_READS="${CORRECTNESS_READS:-250}"
 BUILD_INDEX_IF_MISSING="${BUILD_INDEX_IF_MISSING:-0}"
 TIME_STYLE="${TIME_STYLE:-auto}"
 BWA_THREADS="${BWA_THREADS:-8}"
-MAPPER_REF="${MAPPER_REF:-}"  # Optional: streaming ref for memory-optimized indexes
+MAPPER_REF="${MAPPER_REF:-$REF}"  # Default because the indexer now defaults to level 5 (no embedded genome)
 
 mkdir -p "$OUT_DIR"
 
@@ -47,6 +47,8 @@ Environment overrides:
   BUILD_INDEX_IF_MISSING=0    Set to 1 to build the FM-index automatically when INDEX is absent
   TIME_STYLE=auto             auto | full | portable
                               full tries '/usr/bin/time -l'; portable uses '/usr/bin/time -p'
+  MAPPER_REF=...              Reference passed to mapper; defaults to REF because
+                              the indexer now defaults to level 5 (no embedded genome)
 
 Notes:
   - The contest judges mapping time and peak RSS excluding index build time.

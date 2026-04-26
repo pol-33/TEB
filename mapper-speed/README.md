@@ -27,8 +27,15 @@ make portable
 ## Commands
 
 ```bash
-./indexer -R /path/to/genome.fa -I /path/to/genome.idx
-./mapper  -I /path/to/genome.idx -i /path/to/reads.fastq -o /path/to/output.sam -k 1
+./indexer -R /path/to/genome.fa -I /path/to/genome.compact.idx
+./mapper  -I /path/to/genome.compact.idx -i /path/to/reads.fastq -o /path/to/output.sam -k 1
+```
+
+`indexer` now defaults to the compact index layout. To force another build mode:
+
+```bash
+./indexer -R /path/to/genome.fa -I /path/to/genome.dense.idx --mode dense
+./indexer -R /path/to/genome.fa -I /path/to/genome.idx --mode auto
 ```
 
 ## Smoke Test

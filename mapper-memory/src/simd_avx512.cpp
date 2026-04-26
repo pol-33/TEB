@@ -88,7 +88,7 @@ uint32_t count_packed_range_avx512(uint8_t packed_rank,
         const uint8_t first_symbol = static_cast<uint8_t>(current & 3ULL);
         const uint8_t end_symbol = static_cast<uint8_t>(std::min<uint64_t>(4ULL, pos - byte_index * 4ULL));
         count += count_partial_byte(packed_rank, packed[byte_index], first_symbol, end_symbol);
-        current = std::min(pos, (byte_index + 1ULL) * 4ULL);
+        current = std::min<uint64_t>(pos, (byte_index + 1ULL) * 4ULL);
     }
 
     const __m512i low_mask = _mm512_set1_epi8(0x0F);
@@ -110,7 +110,7 @@ uint32_t count_packed_range_avx512(uint8_t packed_rank,
         count += count_partial_byte(packed_rank, byte, 0U, 4U);
     }
 
-    current = std::max(current, full_byte_end * 4ULL);
+    current = std::max<uint64_t>(current, full_byte_end * 4ULL);
     if (current < pos) {
         const uint64_t tail_byte_index = current / 4ULL;
         const uint8_t end_symbol = static_cast<uint8_t>(pos - current);

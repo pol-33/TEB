@@ -1,7 +1,24 @@
 CXX      = g++
-BASE_CXXFLAGS = -O3 -std=c++17 -Wall -Wextra -MMD -MP -Iinclude
-CXXFLAGS = $(BASE_CXXFLAGS)
-LDFLAGS  =
+UNAME_S  := $(shell uname -s)
+UNAME_M  := $(shell uname -m)
+
+BASE_CXXFLAGS = -O3 -DNDEBUG -std=c++17 -Wall -Wextra -Wpedantic -MMD -MP -Iinclude \
+                -fomit-frame-pointer -fstrict-aliasing
+BASE_LDFLAGS  =
+PORTABLE_CXXFLAGS = $(BASE_CXXFLAGS)
+PORTABLE_LDFLAGS  = $(BASE_LDFLAGS)
+NATIVE_CXXFLAGS   = $(BASE_CXXFLAGS)
+NATIVE_LDFLAGS    = $(BASE_LDFLAGS)
+
+ifeq ($(UNAME_S),Darwin)
+  NATIVE_CXXFLAGS += -mcpu=apple-m1
+else
+  NATIVE_CXXFLAGS += -march=native -mtune=native -flto -fno-semantic-interposition
+  NATIVE_LDFLAGS  += -flto
+endif
+
+CXXFLAGS ?= $(NATIVE_CXXFLAGS)
+LDFLAGS  ?= $(NATIVE_LDFLAGS)
 
 SIMD ?= auto
 ARCH := $(shell uname -m)
@@ -57,7 +74,8 @@ endif
 SRC_DIR  = src
 OBJ_DIR  = obj
 
-COMMON_SRCS = bwt.cpp fm_index.cpp fm_search.cpp alignment.cpp fasta_reader.cpp fastq_reader.cpp simd_dispatch.cpp
+COMMON_SRCS = bwt.cpp fm_index.cpp fm_search.cpp alignment.cpp fasta_reader.cpp fastq_reader.cpp \
+              simd_dispatch.cpp
 COMMON_OBJS = $(patsubst %.cpp,$(OBJ_DIR)/%.o,$(COMMON_SRCS))
 SIMD_AVX512_OBJS =
 ifeq ($(HAVE_AVX512_IMPL),1)
@@ -66,6 +84,20 @@ endif
 DEPS = $(COMMON_OBJS:.o=.d) $(SIMD_AVX512_OBJS:.o=.d) $(OBJ_DIR)/indexer.d $(OBJ_DIR)/mapper.d $(OBJ_DIR)/simd_selftest.d
 
 all: indexer mapper
+
+portable:
+	$(MAKE) CXXFLAGS='$(PORTABLE_CXXFLAGS)' LDFLAGS='$(PORTABLE_LDFLAGS)' SIMD='$(SIMD)' OPENMP='$(OPENMP)' all
+
+pgo-generate:
+	$(MAKE) clean
+	$(MAKE) CXXFLAGS='$(NATIVE_CXXFLAGS) -fprofile-generate' \
+	        LDFLAGS='$(NATIVE_LDFLAGS) -fprofile-generate' \
+	        SIMD='$(SIMD)' OPENMP='$(OPENMP)' all
+
+pgo-use:
+	$(MAKE) CXXFLAGS='$(NATIVE_CXXFLAGS) -fprofile-use -fprofile-correction' \
+	        LDFLAGS='$(NATIVE_LDFLAGS) -fprofile-use -fprofile-correction' \
+	        SIMD='$(SIMD)' OPENMP='$(OPENMP)' all
 
 obj:
 	mkdir -p $(OBJ_DIR)
@@ -77,13 +109,13 @@ $(OBJ_DIR)/simd_avx512.o: $(SRC_DIR)/simd_avx512.cpp | obj
 	$(CXX) $(CXXFLAGS) $(AVX512_CXXFLAGS) -c $< -o $@
 
 indexer: $(OBJ_DIR)/indexer.o $(COMMON_OBJS) $(SIMD_AVX512_OBJS)
-	$(CXX) $(LDFLAGS) $^ -o $@
+	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -o $@
 
 mapper: $(OBJ_DIR)/mapper.o $(COMMON_OBJS) $(SIMD_AVX512_OBJS)
-	$(CXX) $(LDFLAGS) $^ -o $@
+	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -o $@
 
 simd_selftest: $(OBJ_DIR)/simd_selftest.o $(COMMON_OBJS) $(SIMD_AVX512_OBJS)
-	$(CXX) $(LDFLAGS) $^ -o $@
+	$(CXX) $(CXXFLAGS) $^ $(LDFLAGS) -o $@
 
 test: all simd_selftest
 	MAPPER_SIMD=off ./simd_selftest
@@ -97,6 +129,6 @@ test: all simd_selftest
 clean:
 	rm -rf $(OBJ_DIR) indexer mapper simd_selftest test/tiny.idx test/out.sam test/out.scalar.sam test/out.auto.sam
 
-.PHONY: all clean test simd_selftest
+.PHONY: all portable pgo-generate pgo-use clean test simd_selftest
 
 -include $(DEPS)

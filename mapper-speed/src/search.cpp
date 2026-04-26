@@ -23,6 +23,7 @@ constexpr uint32_t kCandidateClusterSlack = 3;
 constexpr uint32_t kQuickSeedFreq = 8;
 constexpr std::size_t kQuickSeedCount = 3;
 constexpr std::size_t kQuickCandidateLimit = 8;
+constexpr std::size_t kCandidatePrefetchDistance = 4;
 
 std::size_t target_seed_count(int max_errors) {
     switch (max_errors) {
@@ -262,6 +263,10 @@ bool MapperEngine::try_upfront_exactish(const std::string& oriented_read,
 
     const std::size_t limit = std::min<std::size_t>(kQuickCandidateLimit, scratch_candidates_.size());
     for (std::size_t i = 0; i < limit; ++i) {
+        if (i + kCandidatePrefetchDistance < limit) {
+            index_.prefetch_reference_window(scratch_candidates_[i + kCandidatePrefetchDistance].start,
+                                             static_cast<uint32_t>(oriented_read.size() + max_errors));
+        }
         const CandidateInfo& candidate = scratch_candidates_[i];
         const std::size_t chrom_index = candidate.chrom_index;
         const auto& chrom = index_.chromosome(chrom_index);
@@ -367,6 +372,9 @@ void MapperEngine::generate_candidates(const std::vector<SeedSpec>& seeds,
         const std::size_t expand_limit = occurrence_expand_limit(seed_index, seed.frequency);
         if (occurrence_count <= expand_limit) {
             for (const uint32_t* it = seed.begin; it != seed.end; ++it) {
+                if (static_cast<std::size_t>(seed.end - it) > 8u) {
+                    prefetch_read_mostly(it + 8);
+                }
                 const uint16_t chrom_index =
                     static_cast<uint16_t>(index_.chromosome_for_position(*it));
                 expand_occurrence(seed_index, chrom_index, *it);
@@ -380,6 +388,14 @@ void MapperEngine::generate_candidates(const std::vector<SeedSpec>& seeds,
                 static_cast<uint64_t>(expand_limit - 1u) / 2u;
             const std::size_t sample_index =
                 static_cast<std::size_t>(numerator / static_cast<uint64_t>(expand_limit - 1u));
+            if (i + 2u < expand_limit) {
+                const uint64_t next_numerator =
+                    static_cast<uint64_t>(i + 2u) * static_cast<uint64_t>(occurrence_count - 1u) +
+                    static_cast<uint64_t>(expand_limit - 1u) / 2u;
+                const std::size_t next_sample_index =
+                    static_cast<std::size_t>(next_numerator / static_cast<uint64_t>(expand_limit - 1u));
+                prefetch_read_mostly(seed.begin + next_sample_index);
+            }
             const uint32_t hit_pos = seed.begin[sample_index];
             const uint16_t chrom_index =
                 static_cast<uint16_t>(index_.chromosome_for_position(hit_pos));
@@ -487,6 +503,7 @@ void MapperEngine::generate_candidates(const std::vector<SeedSpec>& seeds,
     if (limit == 0u) {
         return;
     }
+    starts.reserve(limit);
     std::partial_sort(scratch_clusters_.begin(), scratch_clusters_.begin() + limit, scratch_clusters_.end(),
                       cluster_better);
     for (std::size_t i = 0; i < limit; ++i) {
@@ -699,7 +716,13 @@ void MapperEngine::search_orientation(const std::string& oriented_read,
     generate_candidates(scratch_seeds_, oriented_read.size(), max_errors, scratch_candidates_);
 
     const int initial_score_limit = (hits.size() >= 2u) ? hits.back().edit_distance : max_errors;
+    scratch_prefiltered_.reserve(scratch_candidates_.size());
     for (const CandidateInfo& candidate : scratch_candidates_) {
+        const std::size_t candidate_index = static_cast<std::size_t>(&candidate - scratch_candidates_.data());
+        if (candidate_index + kCandidatePrefetchDistance < scratch_candidates_.size()) {
+            index_.prefetch_reference_window(scratch_candidates_[candidate_index + kCandidatePrefetchDistance].start,
+                                             static_cast<uint32_t>(oriented_read.size() + max_errors));
+        }
         const int best_score =
             prefilter_candidate(oriented_read, packed_read, packed_read_valid, query, candidate, max_errors);
         if (best_score <= initial_score_limit) {
@@ -735,6 +758,10 @@ void MapperEngine::search_orientation(const std::string& oriented_read,
     const std::size_t dp_limit =
         std::min<std::size_t>(kMaxDpFinalistsPerOrientation, prefilter_limit);
     for (std::size_t i = 0; i < dp_limit; ++i) {
+        if (i + 1u < dp_limit) {
+            index_.prefetch_reference_window(scratch_prefiltered_[i + 1u].candidate.start,
+                                             static_cast<uint32_t>(oriented_read.size() + max_errors));
+        }
         const int current_score_limit = (hits.size() >= 2u) ? hits.back().edit_distance : max_errors;
         if (scratch_prefiltered_[i].best_score > current_score_limit ||
             scratch_prefiltered_[i].best_score > best_prefilter_score + 1) {

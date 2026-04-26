@@ -464,6 +464,16 @@ uint32_t IndexView::count_mismatches_packed(uint32_t global_pos,
     auto load_ref_codes = [&](uint32_t pos) -> uint64_t {
         const std::size_t byte_index = pos >> 2u;
         const unsigned bit_shift = (pos & 3u) * 2u;
+        if (__builtin_expect(byte_index + 16u <= header_.packed_reference_bytes, 1)) {
+            uint64_t lo = 0;
+            std::memcpy(&lo, packed_reference_ + byte_index, sizeof(lo));
+            if (bit_shift == 0u) {
+                return lo;
+            }
+            uint64_t hi = 0;
+            std::memcpy(&hi, packed_reference_ + byte_index + sizeof(lo), sizeof(hi));
+            return (lo >> bit_shift) | (hi << (64u - bit_shift));
+        }
         uint64_t lo = 0;
         uint64_t hi = 0;
         const std::size_t available = header_.packed_reference_bytes - byte_index;
@@ -484,13 +494,21 @@ uint32_t IndexView::count_mismatches_packed(uint32_t global_pos,
     auto load_ref_n_mask = [&](uint32_t pos) -> uint64_t {
         const std::size_t word_index = pos >> 6u;
         const unsigned bit_shift = pos & 63u;
+        const std::size_t n_mask_words = header_.n_mask_bytes / sizeof(uint64_t);
+        if (__builtin_expect(word_index + 1u < n_mask_words, 1)) {
+            const uint64_t lo = n_mask_[word_index];
+            if (bit_shift == 0u) {
+                return lo;
+            }
+            const uint64_t hi = n_mask_[word_index + 1u];
+            return (lo >> bit_shift) | (hi << (64u - bit_shift));
+        }
         uint64_t lo = n_mask_[word_index];
         if (bit_shift == 0u) {
             return lo;
         }
         uint64_t hi = 0;
         const std::size_t next_word = word_index + 1u;
-        const std::size_t n_mask_words = header_.n_mask_bytes / sizeof(uint64_t);
         if (next_word < n_mask_words) {
             hi = n_mask_[next_word];
         }
@@ -576,6 +594,29 @@ uint32_t IndexView::count_mismatches_packed(uint32_t global_pos,
         }
     }
     return mismatches;
+}
+
+void IndexView::prefetch_reference_window(uint32_t global_pos, uint32_t length) const {
+    if (length == 0u) {
+        return;
+    }
+    const std::size_t start_byte = global_pos >> 2u;
+    const std::size_t end_byte =
+        std::min<std::size_t>(header_.packed_reference_bytes - 1u,
+                              static_cast<std::size_t>((global_pos + length - 1u) >> 2u));
+    prefetch_read_mostly(packed_reference_ + start_byte);
+    prefetch_read_mostly(packed_reference_ + end_byte);
+    if (end_byte > start_byte + 32u) {
+        prefetch_read_mostly(packed_reference_ + ((start_byte + end_byte) >> 1u));
+    }
+
+    const std::size_t n_mask_words = header_.n_mask_bytes / sizeof(uint64_t);
+    const std::size_t start_word = global_pos >> 6u;
+    const std::size_t end_word =
+        std::min<std::size_t>(n_mask_words - 1u,
+                              static_cast<std::size_t>((global_pos + length - 1u) >> 6u));
+    prefetch_read_mostly(n_mask_ + start_word);
+    prefetch_read_mostly(n_mask_ + end_word);
 }
 
 std::size_t IndexView::chromosome_for_position(uint32_t global_pos) const {

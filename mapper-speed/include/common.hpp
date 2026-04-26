@@ -422,6 +422,14 @@ inline uint64_t physical_memory_bytes() {
     return 0;
 }
 
+inline void prefetch_read_mostly(const void* ptr) {
+#if defined(__GNUC__) || defined(__clang__)
+    __builtin_prefetch(ptr, 0, 1);
+#else
+    (void)ptr;
+#endif
+}
+
 inline void throw_if(bool condition, const std::string& message) {
     if (condition) {
         throw std::runtime_error(message);

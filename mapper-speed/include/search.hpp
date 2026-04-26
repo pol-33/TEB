@@ -69,6 +69,7 @@ public:
     explicit MapperEngine(const IndexView& index);
 
     std::string map_record(const FastqRecord& record, int max_errors);
+    const char* verifier_kernel_name() const { return dispatch_.name; }
 
 private:
     void collect_seed_positions(std::size_t read_length, int max_errors, std::vector<uint32_t>& positions) const;
